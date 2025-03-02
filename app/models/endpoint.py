@@ -12,5 +12,6 @@ class Endpoint(db.Model):
 
     def get_connection(self):
         """Get decrypted connection details."""
-        from app.utils.security import decrypt
-        return decrypt(self.config)
+        from app.utils.security import SecurityManager
+        security = SecurityManager()
+        return security.decrypt(self.config)
