@@ -1,0 +1,6 @@
+Flask==2.3.2
+Flask-SQLAlchemy==3.0.5
+Flask-Migrate==4.0.4
+cx_Oracle==8.3.0
+google-cloud-bigquery==3.10.0
+python-dotenv==1.0.0
