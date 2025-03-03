@@ -1,0 +1,83 @@
+
+<div class="task-config-modal">
+  <div class="config-header">
+    <h3>Configure Replication Task</h3>
+    <button class="close-btn" onclick="closeConfig()">×</button>
+  </div>
+  
+  <div class="config-sections">
+    <!-- Source Configuration -->
+    <div class="config-section">
+      <h4>Source Settings</h4>
+      <div class="source-tables">
+        <div class="search-box">
+          <input type="text" placeholder="Search tables..." 
+                 onkeyup="filterTables(this)">
+        </div>
+        <div class="table-list scrollable">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Target Configuration -->
+    <div class="config-section">
+      <h4>Target Settings</h4>
+      <div class="target-options">
+        <div class="partition-config">
+          <label>Partitioning:
+            <select name="partition_type">
+              <option value="none">None</option>
+              <option value="time">Time-based</option>
+              <option value="range">Range</option>
+              <option value="ingestion">Ingestion time</option>
+            </select>
+          </label>
+          <div class="partition-details hidden">
+            <input type="text" name="partition_field" 
+                   placeholder="Partition field">
+            <select name="partition_interval">
+              <option value="DAILY">Daily</option>
+              <option value="MONTHLY">Monthly</option>
+              <option value="YEARLY">Yearly</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="clustering-config">
+          <label>Clustering Columns:
+            <input type="text" name="cluster_columns"
+                   placeholder="comma-separated columns">
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="config-section">
+      <h4>Advanced Settings</h4>
+      <div class="advanced-options">
+        <label>
+          <input type="checkbox" name="ddl_replication">
+          Replicate DDL changes
+        </label>
+        <label>
+          <input type="checkbox" name="initial_load" checked>
+          Perform initial load
+        </label>
+        <label>
+          CDC Method:
+          <select name="cdc_method">
+            <option value="logminer">Oracle LogMiner</option>
+            <option value="timestamp">Timestamp Column</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-footer">
+    <button class="btn-save" onclick="saveTaskConfig()">Save</button>
+    <button class="btn-cancel" onclick="closeConfig()">Cancel</button>
+  </div>
+</div>
