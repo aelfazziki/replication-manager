@@ -1,9 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, url_for
-from app.models import Endpoint, ReplicationTask
-from app import db
+from ..models import Endpoint, ReplicationTask
+from .. import db
 
 bp = Blueprint('web', __name__)
-
 @bp.route('/')
 def dashboard():
     """Render the dashboard."""

@@ -1,4 +1,4 @@
-from app import db
+from .. import db  # Relative import
 
 class Endpoint(db.Model):
     """Represents a source or target endpoint."""

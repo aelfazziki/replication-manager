@@ -1,7 +1,8 @@
-from app import db
+from .. import db  # Relative import
+from .. import db
 
 class ReplicationTask(db.Model):
-    """Represents a replication task."""
+    __tablename__ = 'replication_task'  # Explicit table name
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), unique=True, nullable=False)
     source_id = db.Column(db.Integer, db.ForeignKey('endpoint.id'))
