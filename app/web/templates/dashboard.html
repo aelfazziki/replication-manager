@@ -1,28 +1,18 @@
-{% extends "base.html" %}
-
-{% block content %}
-<h1>Replication Tasks</h1>
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Replication Manager</title>
+</head>
+<body>
+    <h1>Replication Tasks</h1>
+    {% if tasks %}
+    <ul>
         {% for task in tasks %}
-        <tr>
-            <td>{{ task.name }}</td>
-            <td>{{ task.status }}</td>
-            <td>
-                <form action="{{ url_for('web.control_task', task_id=task.id) }}" method="post">
-                    <button name="action" value="start">Start</button>
-                    <button name="action" value="stop">Stop</button>
-                </form>
-            </td>
-        </tr>
+        <li>{{ task.name }} - {{ task.status }}</li>
         {% endfor %}
-    </tbody>
-</table>
-{% endblock %}
+    </ul>
+    {% else %}
+    <p>No tasks found.</p>
+    {% endif %}
+</body>
+</html>
