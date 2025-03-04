@@ -1,22 +1,24 @@
-body {
-    font-family: Arial, sans-serif;
-    margin: 0;
-    padding: 20px;
+.btn {
+    background: #4CAF50;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    text-decoration: none;
+    margin: 5px;
 }
+
+.btn-start { background: #4CAF50; }
+.btn-stop { background: #f44336; }
+.btn-delete { background: #ff9800; }
 
 table {
     width: 100%;
+    margin-top: 20px;
     border-collapse: collapse;
 }
 
 th, td {
-    padding: 10px;
-    border: 1px solid #ddd;
+    padding: 12px;
     text-align: left;
-}
-
-button {
-    padding: 5px 10px;
-    margin: 2px;
-    cursor: pointer;
+    border-bottom: 1px solid #ddd;
 }

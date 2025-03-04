@@ -1,0 +1,12 @@
+<!-- Pagination -->
+<div class="pagination">
+    {% if tasks.has_prev %}
+        <a href="?page={{ tasks.prev_num }}">Précédent</a>
+    {% endif %}
+
+    <span>Page {{ tasks.page }} / {{ tasks.pages }}</span>
+
+    {% if tasks.has_next %}
+        <a href="?page={{ tasks.next_num }}">Suivant</a>
+    {% endif %}
+</div>

@@ -1,18 +1,48 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Replication Manager</title>
-</head>
-<body>
-    <h1>Replication Tasks</h1>
-    {% if tasks %}
-    <ul>
-        {% for task in tasks %}
-        <li>{{ task.name }} - {{ task.status }}</li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p>No tasks found.</p>
-    {% endif %}
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Gestion des Réplications</h1>
+
+<!-- Boutons d'action -->
+<div class="actions">
+    <a href="{{ url_for('web.create_task') }}" class="btn">+ Nouvelle Tâche</a>
+    <a href="{{ url_for('web.create_endpoint') }}" class="btn">+ Nouvel Endpoint</a>
+</div>
+
+<!-- Liste des tâches -->
+<h2>Tâches de Réplication</h2>
+{% if tasks %}
+<table>
+    <tr>
+        <th>Nom</th>
+        <th>Source</th>
+        <th>Cible</th>
+        <th>Statut</th>
+        <th>Actions</th>
+    </tr>
+    {% for task in tasks %}
+    <tr>
+        <td>{{ task.name }}</td>
+        <td>{{ task.source.name }}</td>
+        <td>{{ task.target.name }}</td>
+        <td>{{ task.status }}</td>
+        <td>
+            <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}" class="btn-start">Démarrer</a>
+            <a href="{{ url_for('web.control_task', task_id=task.id, action='stop') }}" class="btn-stop">Arrêter</a>
+            <a href="{{ url_for('web.delete_task', task_id=task.id) }}" class="btn-delete">Supprimer</a>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>Aucune tâche trouvée.</p>
+{% endif %}
+
+<!-- Liste des endpoints -->
+<h2>Endpoints Configurés</h2>
+{% if endpoints %}
+<table>
+    <!-- Similaire à la table des tâches -->
+</table>
+{% endif %}
+{% endblock %}

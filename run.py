@@ -1,6 +1,10 @@
-from app import create_app
+from app import create_app, db
 
 app = create_app()
 
+# Créer la base si elle n'existe pas
+with app.app_context():
+    db.create_all()
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run()

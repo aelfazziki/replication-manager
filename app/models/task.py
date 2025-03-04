@@ -17,3 +17,6 @@ class ReplicationTask(db.Model):
     
     source = db.relationship('Endpoint', foreign_keys=[source_id])
     target = db.relationship('Endpoint', foreign_keys=[target_id])
+
+    source = db.relationship('Endpoint', foreign_keys=[source_id], backref='source_tasks')
+    target = db.relationship('Endpoint', foreign_keys=[target_id], backref='target_tasks')

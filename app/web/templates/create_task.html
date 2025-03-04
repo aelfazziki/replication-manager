@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Créer une nouvelle tâche</h1>
+<form method="POST">
+    <label>Nom de la tâche:</label>
+    <input type="text" name="name" required>
+    
+    <label>Source:</label>
+    <select name="source_id">
+        {% for endpoint in endpoints %}
+        <option value="{{ endpoint.id }}">{{ endpoint.name }}</option>
+        {% endfor %}
+    </select>
+
+    <label>Cible:</label>
+    <select name="target_id">
+        {% for endpoint in endpoints %}
+        <option value="{{ endpoint.id }}">{{ endpoint.name }}</option>
+        {% endfor %}
+    </select>
+
+    <button type="submit">Créer</button>
+</form>
+{% endblock %}

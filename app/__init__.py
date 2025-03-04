@@ -2,23 +2,20 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
+# Initialiser les extensions AVANT de créer l'app
 db = SQLAlchemy()
 migrate = Migrate()
-
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object('config.Config')
 
-    # Initialize extensions first
+    # Initialiser les extensions avec l'app
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # Import models AFTER initialization
-    from app.models import endpoint, task  # Ensures models are registered
-    # Register blueprints
-    from app.web.routes import bp as web_bp
-    app.register_blueprint(web_bp)  # <- This registers the root route
-
+    # Importer les routes et modèles APRÈS l'initialisation
+    from app.web import routes
+    app.register_blueprint(routes.bp)
 
     return app
