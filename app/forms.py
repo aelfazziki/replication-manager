@@ -1,8 +1,3 @@
-from wtforms import StringField, IntegerField, PasswordField, validators
-from flask_wtf import FlaskForm  # <-- Ajouter cette ligne
-from wtforms import StringField, SelectField, TextAreaField, SubmitField
-from wtforms.validators import DataRequired, Length
-
 from flask_wtf import FlaskForm
 from wtforms import (
     StringField,
@@ -14,36 +9,40 @@ from wtforms import (
 )
 from wtforms.validators import DataRequired, Length
 
+
 class EndpointForm(FlaskForm):
     name = StringField('Nom', validators=[DataRequired(), Length(max=100)])
-    # Required submit field
-    submit = SubmitField('Create Endpoint')
     type = SelectField('Type', choices=[
         ('oracle', 'Oracle'),
         ('bigquery', 'BigQuery'),
         ('mysql', 'MySQL')
     ], validators=[DataRequired()])
 
-    # Champs communs
+    # Common fields
     username = StringField('Utilisateur')
     password = PasswordField('Mot de passe')
 
-    # Oracle spécifique
+    # Oracle specific
     host = StringField('Hôte')
     port = IntegerField('Port', default=1521)
     service_name = StringField('Nom du service')
 
-    # BigQuery spécifique
+    # BigQuery specific
     dataset = StringField('Dataset')
     credentials_json = TextAreaField('Credentials JSON')
 
-    # MySQL spécifique
+    # MySQL specific
     database = StringField('Base de données')
 
     test_connection = SubmitField('Tester la connexion')
+    submit = SubmitField('Create Endpoint')
+
 
 class TaskForm(FlaskForm):
     name = StringField('Nom', validators=[
         DataRequired(),
         Length(min=3, max=50)
     ])
+    source = SelectField('Source Endpoint', choices=[])
+    destination = SelectField('Destination Endpoint', choices=[])
+    submit = SubmitField('Create Task')

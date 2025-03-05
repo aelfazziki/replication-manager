@@ -1,15 +1,28 @@
-from .. import db
+from app import db
+from datetime import datetime
 
 
 class Endpoint(db.Model):
-    __tablename__ = 'endpoint'  # Spécifier explicitement le nom de la table
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    type = db.Column(db.String(20), nullable=False)
 
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name = db.Column(db.String(120), unique=True, nullable=False)
-    type = db.Column(db.String(20))
-    config = db.Column(db.JSON)
-    created_at = db.Column(db.DateTime, default=db.func.now())
-    updated_at = db.Column(db.DateTime, default=db.func.now(), onupdate=db.func.now())
+    # Common fields
+    username = db.Column(db.String(50))  # Add this
+    password = db.Column(db.String(100))  # Add this
 
+    # Oracle specific fields
+    host = db.Column(db.String(120))
+    port = db.Column(db.Integer)
+    service_name = db.Column(db.String(50))
+
+    # BigQuery specific fields
+    dataset = db.Column(db.String(100))
+    credentials_json = db.Column(db.Text)
+
+    # MySQL specific fields
+    database = db.Column(db.String(100))
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
     def __repr__(self):
         return f'<Endpoint {self.name}>'

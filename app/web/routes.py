@@ -1,37 +1,105 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
-from app.models import Endpoint, ReplicationTask  # Importer les modules
-from app import db  # Importer db depuis le package principal
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from app.models import Endpoint, ReplicationTask
+from app import db
+from app.forms import TaskForm, EndpointForm
+from app.services.connection_tester import test_database_connection
 
-# Déclarer le blueprint en premier
 bp = Blueprint('web', __name__, template_folder='templates')
 
-# Routes
+
 @bp.route('/')
 def dashboard():
     page = request.args.get('page', 1, type=int)
     per_page = 10
-
     tasks = ReplicationTask.query.paginate(page=page, per_page=per_page)
     endpoints = Endpoint.query.paginate(page=page, per_page=per_page)
+    return render_template('dashboard.html', tasks=tasks, endpoints=endpoints)
 
-    return render_template('dashboard.html',
-                           tasks=tasks,
-                           endpoints=endpoints)
 
-from app.forms import TaskForm, EndpointForm
+@bp.route('/endpoint/create', methods=['GET', 'POST'])
+def create_endpoint():
+    form = EndpointForm()
+
+    if form.validate_on_submit():
+        try:
+            new_endpoint = Endpoint(
+                name=form.name.data,
+                type=form.type.data,
+                username=form.username.data,
+                password=form.password.data,
+                host=form.host.data if form.type.data == 'oracle' else None,
+                port=form.port.data if form.type.data == 'oracle' else None,
+                service_name=form.service_name.data if form.type.data == 'oracle' else None,
+                dataset=form.dataset.data if form.type.data == 'bigquery' else None,
+                credentials_json=form.credentials_json.data if form.type.data == 'bigquery' else None,
+                database=form.database.data if form.type.data == 'mysql' else None
+            )
+
+            db.session.add(new_endpoint)
+            db.session.commit()
+            flash('Endpoint créé avec succès', 'success')
+            return redirect(url_for('web.dashboard'))
+
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erreur de création: {str(e)}', 'danger')
+
+    return render_template('create_endpoint.html', form=form)
+
+
+@bp.route('/endpoint/test_connection', methods=['POST'])
+def test_connection():
+    form_data = request.form
+    config = {
+        'type': form_data.get('type'),
+        'host': form_data.get('host'),
+        'port': form_data.get('port'),
+        'service_name': form_data.get('service_name'),
+        'username': form_data.get('username'),
+        'password': form_data.get('password'),
+        'dataset': form_data.get('dataset'),
+        'credentials_json': form_data.get('credentials_json'),
+        'database': form_data.get('database')
+    }
+
+    success, message = test_database_connection(config)
+    return jsonify({'success': success, 'message': message})
 
 
 @bp.route('/task/create', methods=['GET', 'POST'])
 def create_task():
     form = TaskForm()
-    form.source.choices = [(e.id, e.name) for e in Endpoint.query.filter_by(type='source')]
-    form.target.choices = [(e.id, e.name) for e in Endpoint.query.filter_by(type='target')]
+
+    # Get all endpoints regardless of type
+    all_endpoints = Endpoint.query.all()
+
+    # Populate dropdowns
+    form.source.choices = [(str(e.id), e.name) for e in all_endpoints]
+    form.destination.choices = [(str(e.id), e.name) for e in all_endpoints]
 
     if form.validate_on_submit():
-        # Création de la tâche
-        return redirect(url_for('web.dashboard'))
+        try:
+            new_task = ReplicationTask(
+                name=form.name.data,
+                source_id=int(form.source.data),
+                destination_id=int(form.destination.data),  # Matches model
+                status='stopped',
+                tables={},  # Add default empty values for other required fields
+                cdc_config={},
+                options={}
+            )
+
+            db.session.add(new_task)
+            db.session.commit()
+            flash('Tâche créée avec succès', 'success')
+            return redirect(url_for('web.dashboard'))
+
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erreur de création: {str(e)}', 'danger')
 
     return render_template('create_task.html', form=form)
+
 
 @bp.route('/task/delete/<int:task_id>')
 def delete_task(task_id):
@@ -41,6 +109,7 @@ def delete_task(task_id):
     flash('Tâche supprimée', 'info')
     return redirect(url_for('web.dashboard'))
 
+
 @bp.route('/task/control/<int:task_id>/<action>')
 def control_task(task_id, action):
     task = ReplicationTask.query.get_or_404(task_id)
@@ -49,36 +118,3 @@ def control_task(task_id, action):
         db.session.commit()
         flash(f'Tâche {action}ée', 'success')
     return redirect(url_for('web.dashboard'))
-
-# Routes pour les endpoints
-from flask import render_template
-from app.forms import EndpointForm  # Import your form class
-
-# Update the route to pass 'form' to the template
-@bp.route('/endpoint/create', methods=['GET', 'POST'])
-def create_endpoint():
-    form = EndpointForm()  # Instantiate your form
-    return render_template('create_endpoint.html', form=form)  # Pass 'form' here
-
-from app.services.connection_tester import test_database_connection
-
-
-@bp.route('/endpoint/test_connection', methods=['POST'])
-def test_connection():
-    endpoint_type = request.form.get('type')
-
-    config = {
-        'type': endpoint_type,
-        'host': request.form.get('host'),
-        'port': request.form.get('port'),
-        'service_name': request.form.get('service_name'),
-        'username': request.form.get('username'),
-        'password': request.form.get('password'),
-        'dataset': request.form.get('dataset'),
-        'credentials_json': request.form.get('credentials_json'),
-        'database': request.form.get('database')
-    }
-
-    success, message = test_database_connection(config)
-    return jsonify({'success': success, 'message': message})
-

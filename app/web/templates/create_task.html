@@ -3,23 +3,23 @@
 {% block content %}
 <h1>Créer une nouvelle tâche</h1>
 <form method="POST">
-    <label>Nom de la tâche:</label>
-    <input type="text" name="name" required>
-    
-    <label>Source:</label>
-    <select name="source_id">
-        {% for endpoint in endpoints %}
-        <option value="{{ endpoint.id }}">{{ endpoint.name }}</option>
-        {% endfor %}
-    </select>
+    {{ form.hidden_tag() }}  <!-- CSRF protection -->
 
-    <label>Cible:</label>
-    <select name="target_id">
-        {% for endpoint in endpoints %}
-        <option value="{{ endpoint.id }}">{{ endpoint.name }}</option>
-        {% endfor %}
-    </select>
+    <div class="form-group">
+        {{ form.name.label }}
+        {{ form.name(class="form-control") }}
+    </div>
 
-    <button type="submit">Créer</button>
+    <div class="form-group">
+        {{ form.source.label }}
+        {{ form.source(class="form-control") }}
+    </div>
+
+    <div class="form-group">
+        {{ form.destination.label }}
+        {{ form.destination(class="form-control") }}
+    </div>
+
+    {{ form.submit(class="btn btn-primary") }}
 </form>
 {% endblock %}
