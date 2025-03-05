@@ -1,23 +1,97 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Créer un nouvel Endpoint</h1>
-<form method="POST">
-    <div class="form-group">
-        <label>Nom de l'endpoint:</label>
-        <input type="text" name="name" class="form-control" required>
-    </div>
-    
-    <div class="form-group">
-        <label>Type:</label>
-        <select name="type" class="form-control" required>
-            <option value="oracle">Oracle</option>
-            <option value="bigquery">BigQuery</option>
-            <option value="mysql">MySQL</option>
-        </select>
-    </div>
+<div class="endpoint-form">
+    <h1>{% if endpoint %}Modifier{% else %}Créer{% endif %} un Endpoint</h1>
 
-    <button type="submit" class="btn btn-primary">Créer</button>
-    <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Annuler</a>
-</form>
+    <form id="endpointForm" method="POST">
+        {{ form.hidden_tag() }}
+
+        <div class="form-group">
+            {{ form.name.label }}
+            {{ form.name(class="form-control") }}
+        </div>
+
+        <div class="form-group">
+            {{ form.type.label }}
+            {{ form.type(class="form-control", onchange="updateFormFields()") }}
+        </div>
+
+        <!-- Champs dynamiques -->
+        <div id="oracleFields" class="database-fields">
+            {{ form.host.label }}
+            {{ form.host(class="form-control") }}
+
+            {{ form.port.label }}
+            {{ form.port(class="form-control") }}
+
+            {{ form.service_name.label }}
+            {{ form.service_name(class="form-control") }}
+        </div>
+
+        <div id="bigqueryFields" class="database-fields">
+            {{ form.dataset.label }}
+            {{ form.dataset(class="form-control") }}
+
+            {{ form.credentials_json.label }}
+            {{ form.credentials_json(class="form-control", rows=5) }}
+        </div>
+
+        <div id="mysqlFields" class="database-fields">
+            {{ form.database.label }}
+            {{ form.database(class="form-control") }}
+        </div>
+
+        <div class="form-group">
+            {{ form.username.label }}
+            {{ form.username(class="form-control") }}
+        </div>
+
+        <div class="form-group">
+            {{ form.password.label }}
+            {{ form.password(class="form-control") }}
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="btn btn-test" onclick="testConnection()">
+                <i class="fas fa-plug"></i> Tester la connexion
+            </button>
+            {{ form.submit(class="btn btn-primary") }}
+        </div>
+    </form>
+
+    <div id="connectionResult" class="mt-3"></div>
+</div>
+
+<script>
+// Affiche/masque les champs spécifiques
+function updateFormFields() {
+    const type = document.getElementById('type').value;
+    document.querySelectorAll('.database-fields').forEach(div => div.style.display = 'none');
+    document.getElementById(type + 'Fields').style.display = 'block';
+}
+
+// Test de connexion AJAX
+async function testConnection() {
+    const formData = new FormData(document.getElementById('endpointForm'));
+    const response = await fetch('/endpoint/test_connection', {
+        method: 'POST',
+        body: formData
+    });
+
+    const result = await response.json();
+    const resultDiv = document.getElementById('connectionResult');
+    resultDiv.className = `alert alert-${result.success ? 'success' : 'danger'}`;
+    resultDiv.innerHTML = result.message;
+}
+
+// Initialisation
+document.addEventListener('DOMContentLoaded', updateFormFields);
+</script>
+
+<style>
+.database-fields { display: none; }
+.btn-test { margin-right: 10px; }
+.fa-plug { margin-right: 5px; }
+</style>
 {% endblock %}

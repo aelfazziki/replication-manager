@@ -22,3 +22,8 @@ class SecurityManager:
         if isinstance(encrypted_data, dict):
             return {k: self.cipher.decrypt(v.encode()).decode() for k, v in encrypted_data.items()}
         return self.cipher.decrypt(encrypted_data.encode()).decode()
+
+    def encrypt_credentials(config):
+        sensitive_fields = ['password', 'credentials_json']
+        return {k: encrypt(v) if k in sensitive_fields else v
+                for k, v in config.items()}
