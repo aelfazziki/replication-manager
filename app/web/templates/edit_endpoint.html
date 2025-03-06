@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <h2>Edit Endpoint</h2>
+    <form method="POST">
+        {{ form.hidden_tag() }}
+
+        <div class="row mb-3">
+            <div class="col-md-6">
+                {{ form.name.label(class="form-label") }}
+                {{ form.name(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.type.label(class="form-label") }}
+                {{ form.type(class="form-control", disabled=true) }}
+            </div>
+        </div>
+
+        <!-- Common Fields -->
+        <div class="row mb-3">
+            <div class="col-md-6">
+                {{ form.username.label(class="form-label") }}
+                {{ form.username(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.password.label(class="form-label") }}
+                {{ form.password(class="form-control") }}
+            </div>
+        </div>
+
+        <!-- Conditional Fields -->
+        {% if endpoint.type == 'oracle' %}
+        <div class="row mb-3">
+            <div class="col-md-4">
+                {{ form.host.label(class="form-label") }}
+                {{ form.host(class="form-control") }}
+            </div>
+            <div class="col-md-4">
+                {{ form.port.label(class="form-label") }}
+                {{ form.port(class="form-control") }}
+            </div>
+            <div class="col-md-4">
+                {{ form.service_name.label(class="form-label") }}
+                {{ form.service_name(class="form-control") }}
+            </div>
+        </div>
+        {% elif endpoint.type == 'bigquery' %}
+        <div class="row mb-3">
+            <div class="col-md-6">
+                {{ form.dataset.label(class="form-label") }}
+                {{ form.dataset(class="form-control") }}
+            </div>
+            <div class="col-md-6">
+                {{ form.credentials_json.label(class="form-label") }}
+                {{ form.credentials_json(class="form-control", rows=5) }}
+            </div>
+        </div>
+        {% elif endpoint.type == 'mysql' %}
+        <div class="row mb-3">
+            <div class="col-md-12">
+                {{ form.database.label(class="form-label") }}
+                {{ form.database(class="form-control") }}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="mt-4">
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

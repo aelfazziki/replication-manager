@@ -1,20 +1,5 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="container">
-    <!-- Creation Buttons Section -->
-    <div class="d-flex justify-content-between mb-4">
-        <div>
-            <a href="{{ url_for('web.create_task') }}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> New Replication Task
-            </a>
-            <a href="{{ url_for('web.create_endpoint') }}" class="btn btn-success ms-2">
-                <i class="bi bi-server"></i> New Endpoint
-            </a>
-        </div>
-    </div>
-
-<div class="container">
-    <h2 class="my-4">Replication Manager Dashboard</h2>
 
     <!-- Tasks Table -->
     <div class="card mb-4">
@@ -46,11 +31,11 @@
                         </td>
                         <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                         <td>
-                            <div class="btn-group" role="group">
+                            <div class="btn-group">
                                 <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}"
                                    class="btn btn-sm btn-success">Start</a>
-                                <a href="{{ url_for('web.control_task', task_id=task.id, action='stop') }}"
-                                   class="btn btn-sm btn-warning">Stop</a>
+                                <a href="{{ url_for('web.edit_task', task_id=task.id) }}"
+                                   class="btn btn-sm btn-primary">Edit</a>
                                 <a href="{{ url_for('web.delete_task', task_id=task.id) }}"
                                    class="btn btn-sm btn-danger"
                                    onclick="return confirm('Delete this task?')">Delete</a>
@@ -81,6 +66,7 @@
                         <th>Connection Details</th>
                         <th>Username</th>
                         <th>Created At</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -90,7 +76,7 @@
                         <td>{{ endpoint.type|upper }}</td>
                         <td>
                             {% if endpoint.type == 'oracle' %}
-                                {{ endpoint.host }}:{{ endpoint.port }}/{{ endpoint.service_name }}
+                                {{ endpoint.host }}:{{ endpoint.port }} ({{ endpoint.service_name }})
                             {% elif endpoint.type == 'bigquery' %}
                                 Dataset: {{ endpoint.dataset }}
                             {% elif endpoint.type == 'mysql' %}
@@ -99,10 +85,19 @@
                         </td>
                         <td>{{ endpoint.username }}</td>
                         <td>{{ endpoint.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>
+                            <div class="btn-group">
+                                <a href="{{ url_for('web.edit_endpoint', endpoint_id=endpoint.id) }}"
+                                   class="btn btn-sm btn-primary">Edit</a>
+                                <a href="{{ url_for('web.delete_endpoint', endpoint_id=endpoint.id) }}"
+                                   class="btn btn-sm btn-danger"
+                                   onclick="return confirm('Delete this endpoint?')">Delete</a>
+                            </div>
+                        </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="5" class="text-center">No configured endpoints</td>
+                        <td colspan="6" class="text-center">No configured endpoints</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -111,5 +106,17 @@
     </div>
 </div>
 
-<!-- Make sure this closing tag exists -->
+<div class="container">
+    <!-- Creation Buttons Section -->
+    <div class="d-flex justify-content-between mb-4">
+        <div>
+            <a href="{{ url_for('web.create_task') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> New Replication Task
+            </a>
+            <a href="{{ url_for('web.create_endpoint') }}" class="btn btn-success ms-2">
+                <i class="bi bi-server"></i> New Endpoint
+            </a>
+        </div>
+    </div>
+
 {% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Edit Task</h1>
+<form method="POST">
+    {{ form.hidden_tag() }}
+    <div class="mb-3">
+        {{ form.name.label }} {{ form.name(class="form-control") }}
+    </div>
+    <div class="row">
+        <div class="col-md-6">
+            {{ form.source.label }} {{ form.source(class="form-control") }}
+        </div>
+        <div class="col-md-6">
+            {{ form.destination.label }} {{ form.destination(class="form-control") }}
+        </div>
+    </div>
+    <div class="mt-3">
+        {{ form.submit(class="btn btn-primary") }}
+        <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+</form>
+{% endblock %}

@@ -122,3 +122,56 @@ def control_task(task_id, action):
         db.session.commit()
         flash(f'Tâche {action}ée', 'success')
     return redirect(url_for('web.dashboard'))
+
+
+# Endpoint deletion
+@bp.route('/endpoint/delete/<int:endpoint_id>')
+def delete_endpoint(endpoint_id):
+    endpoint = Endpoint.query.get_or_404(endpoint_id)
+    db.session.delete(endpoint)
+    db.session.commit()
+    flash('Endpoint deleted successfully', 'success')
+    return redirect(url_for('web.dashboard'))
+
+
+# Endpoint editing
+@bp.route('/endpoint/edit/<int:endpoint_id>', methods=['GET', 'POST'])
+def edit_endpoint(endpoint_id):
+    endpoint = Endpoint.query.get_or_404(endpoint_id)
+    form = EndpointForm(obj=endpoint)
+
+    if form.validate_on_submit():
+        try:
+            form.populate_obj(endpoint)
+            db.session.commit()
+            flash('Endpoint updated successfully', 'success')
+            return redirect(url_for('web.dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Update error: {str(e)}', 'danger')
+
+    return render_template('edit_endpoint.html', form=form, endpoint=endpoint)
+
+
+# Task editing
+@bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
+def edit_task(task_id):
+    task = ReplicationTask.query.get_or_404(task_id)
+    form = TaskForm(obj=task)
+
+    # Populate endpoints
+    all_endpoints = Endpoint.query.all()
+    form.source.choices = [(str(e.id), e.name) for e in all_endpoints]
+    form.destination.choices = [(str(e.id), e.name) for e in all_endpoints]
+
+    if form.validate_on_submit():
+        try:
+            form.populate_obj(task)
+            db.session.commit()
+            flash('Task updated successfully', 'success')
+            return redirect(url_for('web.dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Update error: {str(e)}', 'danger')
+
+    return render_template('edit_task.html', form=form, task=task)
