@@ -1,48 +1,103 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Gestion des Réplications</h1>
+<div class="container">
+    <h2 class="my-4">Replication Manager Dashboard</h2>
 
-<!-- Boutons d'action -->
-<div class="actions">
-    <a href="{{ url_for('web.create_task') }}" class="btn">+ Nouvelle Tâche</a>
-    <a href="{{ url_for('web.create_endpoint') }}" class="btn">+ Nouvel Endpoint</a>
+    <!-- Tasks Table -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4 class="mb-0">Active Replication Tasks</h4>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Task Name</th>
+                        <th>Source</th>
+                        <th>Destination</th>
+                        <th>Status</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for task in tasks %}
+                    <tr>
+                        <td>{{ task.name }}</td>
+                        <td>{{ task.source.name }}</td>
+                        <td>{{ task.destination.name }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if task.status == 'running' else 'warning' }}">
+                                {{ task.status|capitalize }}
+                            </span>
+                        </td>
+                        <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td>
+                            <div class="btn-group" role="group">
+                                <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}"
+                                   class="btn btn-sm btn-success">Start</a>
+                                <a href="{{ url_for('web.control_task', task_id=task.id, action='stop') }}"
+                                   class="btn btn-sm btn-warning">Stop</a>
+                                <a href="{{ url_for('web.delete_task', task_id=task.id) }}"
+                                   class="btn btn-sm btn-danger"
+                                   onclick="return confirm('Delete this task?')">Delete</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center">No active replication tasks</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Endpoints Table -->
+    <div class="card">
+        <div class="card-header">
+            <h4 class="mb-0">Configured Endpoints</h4>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Connection Details</th>
+                        <th>Username</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for endpoint in endpoints %}
+                    <tr>
+                        <td>{{ endpoint.name }}</td>
+                        <td>{{ endpoint.type|upper }}</td>
+                        <td>
+                            {% if endpoint.type == 'oracle' %}
+                                {{ endpoint.host }}:{{ endpoint.port }}/{{ endpoint.service_name }}
+                            {% elif endpoint.type == 'bigquery' %}
+                                Dataset: {{ endpoint.dataset }}
+                            {% elif endpoint.type == 'mysql' %}
+                                Database: {{ endpoint.database }}
+                            {% endif %}
+                        </td>
+                        <td>{{ endpoint.username }}</td>
+                        <td>{{ endpoint.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center">No configured endpoints</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
-<!-- Liste des tâches -->
-<h2>Tâches de Réplication</h2>
-{% if tasks %}
-<table>
-    <tr>
-        <th>Nom</th>
-        <th>Source</th>
-        <th>Cible</th>
-        <th>Statut</th>
-        <th>Actions</th>
-    </tr>
-    {% for task in tasks %}
-    <tr>
-        <td>{{ task.name }}</td>
-        <td>{{ task.source.name }}</td>
-        <td>{{ task.target.name }}</td>
-        <td>{{ task.status }}</td>
-        <td>
-            <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}" class="btn-start">Démarrer</a>
-            <a href="{{ url_for('web.control_task', task_id=task.id, action='stop') }}" class="btn-stop">Arrêter</a>
-            <a href="{{ url_for('web.delete_task', task_id=task.id) }}" class="btn-delete">Supprimer</a>
-        </td>
-    </tr>
-    {% endfor %}
-</table>
-{% else %}
-<p>Aucune tâche trouvée.</p>
-{% endif %}
-
-<!-- Liste des endpoints -->
-<h2>Endpoints Configurés</h2>
-{% if endpoints %}
-<table>
-    <!-- Similaire à la table des tâches -->
-</table>
-{% endif %}
+<!-- Make sure this closing tag exists -->
 {% endblock %}

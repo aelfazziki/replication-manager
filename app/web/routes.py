@@ -11,10 +11,14 @@ bp = Blueprint('web', __name__, template_folder='templates')
 def dashboard():
     page = request.args.get('page', 1, type=int)
     per_page = 10
-    tasks = ReplicationTask.query.paginate(page=page, per_page=per_page)
-    endpoints = Endpoint.query.paginate(page=page, per_page=per_page)
-    return render_template('dashboard.html', tasks=tasks, endpoints=endpoints)
 
+    # Add explicit ordering and remove pagination for testing
+    tasks = ReplicationTask.query.order_by(ReplicationTask.created_at.desc()).all()
+    endpoints = Endpoint.query.order_by(Endpoint.created_at.desc()).all()
+
+    return render_template('dashboard.html',
+                           tasks=tasks,
+                           endpoints=endpoints)
 
 @bp.route('/endpoint/create', methods=['GET', 'POST'])
 def create_endpoint():
