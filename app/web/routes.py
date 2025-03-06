@@ -154,9 +154,10 @@ def edit_endpoint(endpoint_id):
 
 
 # Task editing
+@bp.route('/task/create', methods=['GET', 'POST'])
 @bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
-def edit_task(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
+def edit_task(task_id=None):
+    task = ReplicationTask.query.get_or_404(task_id) if task_id else None
     form = TaskForm(obj=task)
 
     # Populate endpoints
@@ -166,12 +167,35 @@ def edit_task(task_id):
 
     if form.validate_on_submit():
         try:
-            form.populate_obj(task)
+            # Convert comma-separated tables to list
+            tables = [t.strip() for t in form.tables.data.split(',') if t.strip()]
+
+            if task:
+                form.populate_obj(task)
+                task.tables = tables
+            else:
+                task = ReplicationTask(
+                    name=form.name.data,
+                    source_id=int(form.source.data),
+                    destination_id=int(form.destination.data),
+                    tables=tables,
+                    initial_load=form.initial_load.data,
+                    create_tables=form.create_tables.data,
+                    replication_mode=form.replication_mode.data,
+                    status='stopped'
+                )
+                db.session.add(task)
+
             db.session.commit()
-            flash('Task updated successfully', 'success')
+            flash('Task saved successfully', 'success')
             return redirect(url_for('web.dashboard'))
+
         except Exception as e:
             db.session.rollback()
-            flash(f'Update error: {str(e)}', 'danger')
+            flash(f'Error saving task: {str(e)}', 'danger')
+
+    # Prepopulate tables list
+    if task and task.tables:
+        form.tables.data = ', '.join(task.tables)
 
     return render_template('edit_task.html', form=form, task=task)

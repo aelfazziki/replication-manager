@@ -14,6 +14,10 @@ class ReplicationTask(db.Model):
     options = db.Column(db.JSON)
     last_position = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=db.func.now())
+    tables = db.Column(db.JSON)  # Store selected tables
+    initial_load = db.Column(db.Boolean, default=False)
+    create_tables = db.Column(db.Boolean, default=True)
+    replication_mode = db.Column(db.String(20), default='full')  # full/partial
 
     # Fixed relationships (removed duplicates)
     source = db.relationship('Endpoint', foreign_keys=[source_id], backref='source_tasks')

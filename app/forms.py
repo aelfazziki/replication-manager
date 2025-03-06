@@ -5,7 +5,8 @@ from wtforms import (
     IntegerField,
     PasswordField,
     TextAreaField,
-    SubmitField
+    SubmitField,
+    BooleanField
 )
 from wtforms.validators import DataRequired, Length
 
@@ -46,3 +47,10 @@ class TaskForm(FlaskForm):
     source = SelectField('Source Endpoint', choices=[])
     destination = SelectField('Destination Endpoint', choices=[])
     submit = SubmitField('Create Task')
+    tables = TextAreaField('Tables to Replicate (comma-separated)')
+    initial_load = BooleanField('Perform Initial Load')
+    create_tables = BooleanField('Create Tables if Missing', default=True)
+    replication_mode = SelectField('Replication Mode', choices=[
+        ('full', 'Full Database'),
+        ('partial', 'Selected Tables')
+    ])
