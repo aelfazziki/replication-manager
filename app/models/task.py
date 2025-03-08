@@ -5,6 +5,7 @@ class ReplicationTask(db.Model):
     __tablename__ = 'replication_task'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), unique=True, nullable=False)
+    metrics = db.Column(db.JSON)  # Stores latency, counts, etc.
     source_id = db.Column(db.Integer, db.ForeignKey('endpoint.id'), nullable=False)
     destination_id = db.Column(db.Integer, db.ForeignKey('endpoint.id'), nullable=False)
     tables = db.Column(db.JSON)

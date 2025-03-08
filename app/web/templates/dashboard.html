@@ -2,56 +2,82 @@
 {% block content %}
 
     <!-- Tasks Table -->
-    <div class="card mb-4">
-        <div class="card-header">
-            <h4 class="mb-0">Active Replication Tasks</h4>
-        </div>
-        <div class="card-body">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Task Name</th>
-                        <th>Source</th>
-                        <th>Destination</th>
-                        <th>Status</th>
-                        <th>Created At</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for task in tasks %}
-                    <tr>
-                        <td>{{ task.name }}</td>
-                        <td>{{ task.source.name }}</td>
-                        <td>{{ task.destination.name }}</td>
-                        <td>
-                            <span class="badge bg-{{ 'success' if task.status == 'running' else 'warning' }}">
-                                {{ task.status|capitalize }}
-                            </span>
-                        </td>
-                        <td>{{ task.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                        <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}"
-                                   class="btn btn-sm btn-success">Start</a>
-                                <a href="{{ url_for('web.edit_task', task_id=task.id) }}"
-                                   class="btn btn-sm btn-primary">Edit</a>
-                                <a href="{{ url_for('web.delete_task', task_id=task.id) }}"
-                                   class="btn btn-sm btn-danger"
-                                   onclick="return confirm('Delete this task?')">Delete</a>
-                            </div>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="6" class="text-center">No active replication tasks</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+ <div class="row row-cols-1 row-cols-md-2 g-4" id="task-monitor">
+    {% for task in tasks %}
+    <div class="col" data-task-id="{{ task.id }}">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0">{{ task.name }}</h5>
+                    <small class="text-muted">ID: {{ task.id }}</small>
+                </div>
+                <span class="task-status-badge badge bg-{{ 'success' if task.status == 'running' else 'danger' }}">
+                    {{ task.status|upper }}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <small class="text-muted">Latency</small>
+                        <div class="h5" data-metric="latency">--</div>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-muted">Data Volume</small>
+                        <div class="h5" data-metric="volume">--</div>
+                    </div>
+                </div>
+
+                <div class="row g-2">
+                    <div class="col-4 text-center">
+                        <div class="text-success">
+                            <small>Inserts</small>
+                            <div class="h5" data-metric="inserts">0</div>
+                        </div>
+                    </div>
+                    <div class="col-4 text-center">
+                        <div class="text-warning">
+                            <small>Updates</small>
+                            <div class="h5" data-metric="updates">0</div>
+                        </div>
+                    </div>
+                    <div class="col-4 text-center">
+                        <div class="text-danger">
+                            <small>Deletes</small>
+                            <div class="h5" data-metric="deletes">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent">
+                <div class="d-flex justify-content-between">
+                    <small class="text-muted">
+                        Last updated: <span data-metric="last-updated">--</span>
+                    </small>
+                    <div class="btn-group">
+                        <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}"
+                           class="btn btn-sm btn-success {{ 'disabled' if task.status == 'running' }}">
+                            Start
+                        </a>
+                        <button class="btn btn-sm btn-danger stop-task-btn"
+                                data-task-id="{{ task.id }}"
+                                {% if task.status != 'running' %}disabled{% endif %}>
+                            Stop
+                        </button>
+                        <a href="{{ url_for('web.edit_task', task_id=task.id) }}"
+                           class="btn btn-sm btn-primary">
+                            Edit
+                        </a>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
-
+    {% else %}
+    <div class="col-12">
+        <div class="alert alert-info">No active replication tasks</div>
+    </div>
+    {% endfor %}
+</div>
     <!-- Endpoints Table -->
     <div class="card">
         <div class="card-header">
@@ -118,5 +144,7 @@
             </a>
         </div>
     </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/task_control.js') }}"></script>
 
 {% endblock %}

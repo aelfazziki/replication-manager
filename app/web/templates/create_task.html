@@ -1,55 +1,117 @@
 {% extends "base.html" %}
-
 {% block content %}
-<h1>Créer une nouvelle tâche</h1>
-<form method="POST">
-    {{ form.hidden_tag() }}  <!-- CSRF protection -->
+<div class="container">
+    <h2>Create Replication Task</h2>
+    <form method="POST" id="task-form">
+        {{ form.hidden_tag() }}
+        <input type="hidden" name="tables" id="selected-tables" value="[]">
 
-    <div class="form-group">
-        {{ form.name.label }}
-        {{ form.name(class="form-control") }}
-    </div>
-
-    <div class="form-group">
-        {{ form.source.label }}
-        {{ form.source(class="form-control") }}
-    </div>
-
-    <div class="form-group">
-        {{ form.destination.label }}
-        {{ form.destination(class="form-control") }}
-    </div>
-
-    {{ form.submit(class="btn btn-primary") }}
-</form>
-        <!-- New Replication Options -->
-        <div class="card mb-3">
-            <div class="card-header">Replication Options</div>
+        <!-- Task Name Field -->  <!-- Added this section -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-pencil-square"></i> Task Details
+            </div>
             <div class="card-body">
                 <div class="mb-3">
-                    {{ form.replication_mode.label }}
-                    {{ form.replication_mode(class="form-select") }}
-                </div>
-
-                <div id="tables-section" class="mb-3"
-                     style="display: {% if form.replication_mode.data == 'partial' %}block{% else %}none{% endif %}">
-                    {{ form.tables.label }}
-                    {{ form.tables(class="form-control", rows=4,
-                        placeholder="Enter table names separated by commas\nExample: users,products,orders") }}
+                    {{ form.name.label }}
+                    {{ form.name(class="form-control", placeholder="Enter task name") }}
                     <small class="form-text text-muted">
-                        Leave empty to replicate all tables
+                        Example: "Production to Backup Replication"
                     </small>
                 </div>
+            </div>
+        </div>
 
+        <!-- Source/Destination Selection -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white">
+                        <i class="bi bi-database"></i> Source Endpoint
+                    </div>
+                    <div class="card-body">
+                        {{ form.source.label }}
+                        {{ form.source(class="form-select") }}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-header bg-success text-white">
+                        <i class="bi bi-database"></i> Destination Endpoint
+                    </div>
+                    <div class="card-body">
+                        {{ form.destination.label }}
+                        {{ form.destination(class="form-select") }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Table Selection -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="bi bi-table"></i> Table Selection
+                <button type="button" class="btn btn-sm btn-outline-primary float-end"
+                        onclick="loadSourceTables()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh Tables
+                </button>
+            </div>
+            <div class="card-body">
                 <div class="row">
-                    <div class="col-md-6">
-                        <div class="form-check">
+                    <div class="col-md-5">
+                        <div class="input-group mb-3">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="schema-search" class="form-control"
+                                   placeholder="Search schemas..." onkeyup="filterSchemas()">
+                        </div>
+                        <div class="card" style="max-height: 500px; overflow-y: auto;">
+                            <div class="card-body" id="schema-list">
+                                <!-- Schemas will load here -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-2 d-flex flex-column justify-content-center align-items-center">
+                        <button type="button" class="btn btn-primary mb-2"
+                                onclick="addSelectedTables()">
+                            <i class="bi bi-arrow-right"></i>
+                        </button>
+                        <button type="button" class="btn btn-secondary"
+                                onclick="removeSelectedTables()">
+                            <i class="bi bi-arrow-left"></i>
+                        </button>
+                    </div>
+
+                    <div class="col-md-5">
+                        <div class="input-group mb-3">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="selected-search" class="form-control"
+                                   placeholder="Search selected..." onkeyup="filterSelected()">
+                        </div>
+                        <div class="card" style="max-height: 500px; overflow-y: auto;">
+                            <div class="card-body" id="selected-list">
+                                <!-- Selected tables appear here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Replication Options -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="bi bi-gear"></i> Options
+                    </div>
+                    <div class="card-body">
+                        <div class="form-check form-switch">
                             {{ form.initial_load(class="form-check-input") }}
                             {{ form.initial_load.label(class="form-check-label") }}
                         </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-check">
+                        <div class="form-check form-switch">
                             {{ form.create_tables(class="form-check-input") }}
                             {{ form.create_tables.label(class="form-check-label") }}
                         </div>
@@ -58,17 +120,178 @@
             </div>
         </div>
 
-        <div class="mt-4">
-            <button type="submit" class="btn btn-primary">Save</button>
-            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
+        <div class="d-grid gap-2 mt-4">
+            <button type="submit" class="btn btn-primary btn-lg">
+                <i class="bi bi-save"></i> Save Task
+            </button>
+            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary btn-lg">
+                <i class="bi bi-x-circle"></i> Cancel
+            </a>
         </div>
     </form>
 </div>
 
 <script>
-document.getElementById('replication_mode').addEventListener('change', function() {
-    document.getElementById('tables-section').style.display =
-        this.value === 'partial' ? 'block' : 'none';
+// Initialize selected tables from hidden field
+let selectedTables = new Set(JSON.parse(document.getElementById('selected-tables').value));
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Load initial tables if editing existing task
+    {% if task %}
+    refreshSelectedList();
+    loadSourceTables();
+    {% endif %}
 });
+
+async function loadSourceTables() {
+    const sourceId = document.getElementById('source').value;
+    if (!sourceId) return;
+
+    try {
+        const response = await fetch(`/api/source/${sourceId}/schemas`);
+        const schemas = await response.json();
+
+        // Debugging log
+        console.log('Received schemas:', schemas);
+
+        if (!Object.keys(schemas).length) {
+            document.getElementById('schema-list').innerHTML = `
+                <div class="alert alert-warning">
+                    No schemas found. Check connection settings.
+                </div>`;
+            return;
+        }
+
+        renderSchemaList(schemas);
+    } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('schema-list').innerHTML = `
+            <div class="alert alert-danger">
+                Error loading schemas: ${error.message}
+            </div>`;
+    }
+}
+
+function renderSchemaList(schemas) {
+    const container = document.getElementById('schema-list');
+    container.innerHTML = '';
+
+    Object.entries(schemas).forEach(([schema, tables]) => {
+        const schemaDiv = document.createElement('div');
+        schemaDiv.className = 'mb-3';
+        schemaDiv.innerHTML = `
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center"
+                     onclick="toggleSchema('${schema}')" style="cursor: pointer">
+                    <div>
+                        <strong>${schema}</strong>
+                        <span class="badge bg-secondary ms-2">${tables.length} tables</span>
+                    </div>
+                    <i class="bi bi-chevron-down"></i>
+                </div>
+                <div class="card-body schema-tables" id="${schema}-tables" style="display: none;">
+                    ${tables.length ? tables.map(table => `
+                        <div class="form-check table-item">
+                            <input class="form-check-input" type="checkbox"
+                                   id="${schema}.${table}" value="${schema}.${table}"
+                                   ${selectedTables.has('${schema}.${table}') ? 'checked' : ''}>
+                            <label class="form-check-label" for="${schema}.${table}">
+                                ${table}
+                            </label>
+                        </div>
+                    `).join('') : '<div class="text-muted">No tables in this schema</div>'}
+                </div>
+            </div>
+        `;
+        container.appendChild(schemaDiv);
+    });
+}
+function refreshSelectedList() {
+    const container = document.getElementById('selected-list');
+    container.innerHTML = Array.from(selectedTables).map(table => `
+        <div class="form-check selected-item">
+            <input class="form-check-input" type="checkbox" id="sel-${table}" value="${table}">
+            <label class="form-check-label" for="sel-${table}">
+                ${table}
+            </label>
+        </div>
+    `).join('') || `<div class="text-muted">No tables selected</div>`;
+}
+
+// Add other functions (toggleSchema, addSelectedTables, removeSelectedTables, filter functions) from previous implementation
+function toggleSchema(schema) {
+    const tablesDiv = document.getElementById(`${schema}-tables`);
+    const icon = tablesDiv.previousElementSibling.querySelector('i');
+    tablesDiv.style.display = tablesDiv.style.display === 'none' ? 'block' : 'none';
+    icon.className = tablesDiv.style.display === 'none' ?
+        'bi bi-chevron-down' : 'bi bi-chevron-up';
+}
+
+function addSelectedTables() {
+    document.querySelectorAll('.table-item input:checked').forEach(checkbox => {
+        selectedTables.add(checkbox.value);
+    });
+    refreshSelectedList();
+    updateHiddenField();
+}
+
+function removeSelectedTables() {
+    document.querySelectorAll('#selected-list input:checked').forEach(checkbox => {
+        selectedTables.delete(checkbox.value);
+    });
+    refreshSelectedList();
+    updateHiddenField();
+}
+
+function updateHiddenField() {
+    document.getElementById('selected-tables').value = JSON.stringify(Array.from(selectedTables));
+}
+
+function filterSchemas() {
+    const search = document.getElementById('schema-search').value.toLowerCase();
+    document.querySelectorAll('#schema-list .card').forEach(card => {
+        const schema = card.querySelector('.card-header strong').textContent.toLowerCase();
+        card.style.display = schema.includes(search) ? 'block' : 'none';
+    });
+}
+
+function filterSelected() {
+    const search = document.getElementById('selected-search').value.toLowerCase();
+    document.querySelectorAll('#selected-list .selected-item').forEach(item => {
+        const table = item.querySelector('label').textContent.toLowerCase();
+        item.style.display = table.includes(search) ? 'block' : 'none';
+    });
+}
 </script>
+
+<style>
+.schema-tables {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.table-item, .selected-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    transition: background-color 0.2s;
+}
+
+.table-item:hover, .selected-item:hover {
+    background-color: #f8f9fa;
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    transition: background-color 0.2s;
+}
+
+.card-header:hover {
+    background-color: #e9ecef;
+}
+
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+</style>
 {% endblock %}

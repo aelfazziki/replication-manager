@@ -6,51 +6,35 @@ from wtforms import (
     PasswordField,
     TextAreaField,
     SubmitField,
-    BooleanField
+    BooleanField,SelectMultipleField
 )
 from wtforms.validators import DataRequired, Length
 
 
 class EndpointForm(FlaskForm):
-    name = StringField('Nom', validators=[DataRequired(), Length(max=100)])
+    name = StringField('Name', validators=[DataRequired()])
     type = SelectField('Type', choices=[
         ('oracle', 'Oracle'),
-        ('bigquery', 'BigQuery'),
-        ('mysql', 'MySQL')
+        ('mysql', 'MySQL'),
+        ('bigquery', 'BigQuery')
     ], validators=[DataRequired()])
-
-    # Common fields
-    username = StringField('Utilisateur')
-    password = PasswordField('Mot de passe')
-
-    # Oracle specific
-    host = StringField('Hôte')
-    port = IntegerField('Port', default=1521)
-    service_name = StringField('Nom du service')
-
-    # BigQuery specific
+    host = StringField('Host')
+    port = IntegerField('Port')
+    service_name = StringField('Service Name')
+    database = StringField('Database')
+    username = StringField('Username')
+    password = PasswordField('Password')
     dataset = StringField('Dataset')
     credentials_json = TextAreaField('Credentials JSON')
-
-    # MySQL specific
-    database = StringField('Base de données')
-
-    test_connection = SubmitField('Tester la connexion')
-    submit = SubmitField('Create Endpoint')
-
+    submit = SubmitField('Save')
 
 class TaskForm(FlaskForm):
-    name = StringField('Nom', validators=[
+    name = StringField('Name', validators=[
         DataRequired(),
         Length(min=3, max=50)
     ])
-    source = SelectField('Source Endpoint', choices=[])
-    destination = SelectField('Destination Endpoint', choices=[])
-    submit = SubmitField('Create Task')
-    tables = TextAreaField('Tables to Replicate (comma-separated)')
-    initial_load = BooleanField('Perform Initial Load')
+    source = SelectField('Source Endpoint', choices=[], validators=[DataRequired()])
+    destination = SelectField('Destination Endpoint', choices=[], validators=[DataRequired()])
+    initial_load = BooleanField('Perform Initial Load', default=True)
     create_tables = BooleanField('Create Tables if Missing', default=True)
-    replication_mode = SelectField('Replication Mode', choices=[
-        ('full', 'Full Database'),
-        ('partial', 'Selected Tables')
-    ])
+    submit = SubmitField('Save Task')

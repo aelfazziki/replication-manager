@@ -22,3 +22,25 @@ th, td {
     text-align: left;
     border-bottom: 1px solid #ddd;
 }
+/* Add basic styling if needed */
+.table-list {
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+}
+
+.selected-tables {
+    background-color: #f8f9fa;
+}
+
+.connection-status {
+    padding: 0.5rem;
+    border-radius: 0.25rem;
+}
+.connection-success {
+    background-color: #d4edda;
+    border-color: #c3e6cb;
+}
+.connection-error {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}

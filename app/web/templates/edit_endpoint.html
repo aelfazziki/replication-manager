@@ -2,8 +2,11 @@
 {% block content %}
 <div class="container">
     <h2>Edit Endpoint</h2>
-    <form method="POST">
+    <form method="POST" id="endpoint-form">
         {{ form.hidden_tag() }}
+
+        <!-- Add hidden field for type since the visible one is disabled -->
+        <input type="hidden" name="type" value="{{ endpoint.type }}">
 
         <div class="row mb-3">
             <div class="col-md-6">
@@ -64,10 +67,34 @@
         </div>
         {% endif %}
 
-        <div class="mt-4">
-            <button type="submit" class="btn btn-primary">Save Changes</button>
+        <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
+            <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
+                <i class="bi bi-plug"></i> Test Connection
+            </button>
+            <button type="submit" class="btn btn-primary">
+                Save Changes
+            </button>
             <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
         </div>
     </form>
 </div>
+
+<script>
+async function testConnection() {
+    const form = document.getElementById('endpoint-form');
+    const formData = new FormData(form);
+
+    try {
+        const response = await fetch("{{ url_for('web.test_connection') }}", {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
+    } catch (error) {
+        alert('⚠️ Connection test error: ' + error.message);
+    }
+}
+</script>
 {% endblock %}

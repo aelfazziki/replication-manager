@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="endpoint-form">
-    <h1>{% if endpoint %}Modifier{% else %}Créer{% endif %} un Endpoint</h1>
+    <h1>{% if endpoint %}Edit{% else %}Create{% endif %} an Endpoint</h1>
 
     <form id="endpointForm" method="POST">
         {{ form.hidden_tag() }}
@@ -52,11 +52,14 @@
             {{ form.password(class="form-control") }}
         </div>
 
-        <div class="form-actions">
-            <button type="button" class="btn btn-test" onclick="testConnection()">
-                <i class="fas fa-plug"></i> Tester la connexion
+        <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
+            <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
+                <i class="bi bi-plug"></i> Test Connection
             </button>
-            {{ form.submit(class="btn btn-primary") }}
+            <button type="submit" class="btn btn-primary">
+                {{ 'Save Changes' if endpoint else 'Create Endpoint' }}
+            </button>
+            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
         </div>
     </form>
 
@@ -73,16 +76,17 @@ function updateFormFields() {
 
 // Test de connexion AJAX
 async function testConnection() {
-    const formData = new FormData(document.getElementById('endpointForm'));
-    const response = await fetch('/endpoint/test_connection', {
-        method: 'POST',
-        body: formData
-    });
-
-    const result = await response.json();
-    const resultDiv = document.getElementById('connectionResult');
-    resultDiv.className = `alert alert-${result.success ? 'success' : 'danger'}`;
-    resultDiv.innerHTML = result.message;
+    const formData = new FormData(document.getElementById('endpoint-form'));
+    try {
+        const response = await fetch("{{ url_for('web.test_connection') }}", {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        alert(result.message);
+    } catch (error) {
+        alert('Connection test failed: ' + error.message);
+    }
 }
 
 // Initialisation
