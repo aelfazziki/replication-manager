@@ -4,7 +4,8 @@ from app import db
 from app.forms import TaskForm, EndpointForm
 from threading import Thread
 import json
-from app.replication_worker import run_replication  # Add this line
+#from app.replication_worker import run_replication  # Add this line
+
 bp = Blueprint('web', __name__, template_folder='templates')
 
 
@@ -100,11 +101,17 @@ def delete_task(task_id):
     return redirect(url_for('web.dashboard'))
 
 
+# Remove the top-level import
+# from app.replication_worker import run_replication
+
 @bp.route('/task/control/<int:task_id>/<action>')
 def control_task(task_id, action):
+    # Import inside the route function
+    from app.replication_worker import run_replication
+    from threading import Thread
+
     task = ReplicationTask.query.get_or_404(task_id)
     if action == 'start':
-        # Start replication worker in background
         task.status = 'running'
         Thread(target=run_replication, args=(task.id,)).start()
         flash('Task started successfully', 'success')
@@ -113,7 +120,6 @@ def control_task(task_id, action):
         flash('Task stop requested', 'info')
     db.session.commit()
     return redirect(url_for('web.dashboard'))
-
 
 # Endpoint deletion
 @bp.route('/endpoint/delete/<int:endpoint_id>')

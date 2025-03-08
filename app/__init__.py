@@ -12,10 +12,15 @@ def create_app():
 
     # Initialiser les extensions avec l'app
     db.init_app(app)
+    # Register blueprints AFTER db initialization
+    with app.app_context():
+        from app.web import routes
+        app.register_blueprint(routes.bp)
+
     migrate.init_app(app, db)
 
     # Importer les routes et modèles APRÈS l'initialisation
-    from app.web import routes
-    app.register_blueprint(routes.bp)
+#    from app.web import routes
+#    app.register_blueprint(routes.bp)
 
     return app

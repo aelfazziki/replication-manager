@@ -1,12 +1,14 @@
-import time
-from app import db, create_app
+from app import db
 from app.models import ReplicationTask
 from datetime import datetime
-
-app = create_app()
+import time
 
 
 def run_replication(task_id):
+    # Create a new app instance for this thread
+    from app import create_app
+    app = create_app()
+
     with app.app_context():
         task = ReplicationTask.query.get(task_id)
         if not task:
@@ -27,7 +29,7 @@ def run_replication(task_id):
             while task.status == 'running':
                 start_time = time.time()
 
-                # Simulate replication work - Replace with actual logic
+                # Simulate replication work
                 time.sleep(2)
 
                 # Update metrics
@@ -41,7 +43,6 @@ def run_replication(task_id):
                 })
 
                 db.session.commit()
-
         except Exception as e:
             app.logger.error(f"Task {task_id} failed: {str(e)}")
         finally:
