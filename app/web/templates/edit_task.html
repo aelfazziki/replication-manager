@@ -2,124 +2,101 @@
 {% block content %}
 <div class="container">
     <h2>{{ 'Edit' if task else 'Create' }} Replication Task</h2>
-    <form method="POST" id="task-form">
-        {{ form.hidden_tag() }}
-        <input type="hidden" name="tables" id="selected-tables"
-               value="{{ task.tables|tojson|safe if task else '[]' }}">
+<form method="POST" id="task-form">
+    {{ form.hidden_tag() }}
+    <input type="hidden" name="selected-tables" id="selected-tables"
+           value="{{ task.tables|tojson|safe if task else '[]' }}">
 
-        <!-- Source/Destination Selection -->
-        <div class="row mb-4">
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header bg-primary text-white">
-                        <i class="bi bi-database"></i> Source Endpoint
-                    </div>
-                    <div class="card-body">
-                        {{ form.source.label }}
-                        {{ form.source(class="form-select") }}
-                    </div>
-                </div>
+    <!-- Task Details -->
+    <div class="form-group">
+        {{ form.name.label }}
+        {{ form.name(class="form-control") }}
+    </div>
+
+    <!-- Source/Destination Selection -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            {{ form.source.label }}
+            {{ form.source(class="form-select") }}
+        </div>
+        <div class="col-md-6">
+            {{ form.destination.label }}
+            {{ form.destination(class="form-select") }}
+        </div>
+    </div>
+
+    <!-- Table Selection -->
+    <div class="card mb-4">
+<div class="card-header">
+    <i class="bi bi-table"></i> Table Selection
+    <div class="float-end">
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                onclick="loadSourceTables()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh Tables
+        </button>
+    </div>
+</div>
+<div class="card-body">
+    <div class="row">
+        <!-- Available Tables Panel -->
+        <div class="col-md-5">
+            <div class="input-group mb-3">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" id="schema-search" class="form-control"
+                       placeholder="Search schemas..." onkeyup="filterSchemas()">
             </div>
-            <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header bg-success text-white">
-                        <i class="bi bi-database"></i> Destination Endpoint
-                    </div>
-                    <div class="card-body">
-                        {{ form.destination.label }}
-                        {{ form.destination(class="form-select") }}
-                    </div>
+            <div class="card" style="max-height: 500px; overflow-y: auto;">
+                <div class="card-body" id="schema-list">
+                    <!-- Schemas will be loaded here -->
                 </div>
             </div>
         </div>
 
-        <!-- Schema and Table Selection -->
-        <div class="card mb-4">
-            <div class="card-header">
-                <i class="bi bi-table"></i> Table Selection
-                <div class="float-end">
-                    <button type="button" class="btn btn-sm btn-outline-primary"
-                            onclick="loadSourceTables()">
-                        <i class="bi bi-arrow-clockwise"></i> Refresh Tables
-                    </button>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <!-- Available Tables Panel -->
-                    <div class="col-md-5">
-                        <div class="input-group mb-3">
-                            <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input type="text" id="schema-search" class="form-control"
-                                   placeholder="Search schemas..." onkeyup="filterSchemas()">
-                        </div>
-                        <div class="card" style="max-height: 500px; overflow-y: auto;">
-                            <div class="card-body" id="schema-list">
-                                <!-- Schemas will be loaded here -->
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Selection Controls -->
-                    <div class="col-md-2 d-flex flex-column justify-content-center align-items-center">
-                        <button type="button" class="btn btn-primary mb-2"
-                                onclick="addSelectedTables()">
-                            <i class="bi bi-arrow-right"></i>
-                        </button>
-                        <button type="button" class="btn btn-secondary"
-                                onclick="removeSelectedTables()">
-                            <i class="bi bi-arrow-left"></i>
-                        </button>
-                    </div>
-
-                    <!-- Selected Tables Panel -->
-                    <div class="col-md-5">
-                        <div class="input-group mb-3">
-                            <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input type="text" id="selected-search" class="form-control"
-                                   placeholder="Search selected..." onkeyup="filterSelected()">
-                        </div>
-                        <div class="card" style="max-height: 500px; overflow-y: auto;">
-                            <div class="card-body" id="selected-list">
-                                <!-- Selected tables will be shown here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Replication Options -->
-        <div class="row mb-4">
-            <div class="col-md-6">
-                <div class="card">
-                    <div class="card-header">
-                        <i class="bi bi-gear"></i> Replication Options
-                    </div>
-                    <div class="card-body">
-                        <div class="form-check form-switch">
-                            {{ form.initial_load(class="form-check-input") }}
-                            {{ form.initial_load.label(class="form-check-label") }}
-                        </div>
-                        <div class="form-check form-switch">
-                            {{ form.create_tables(class="form-check-input") }}
-                            {{ form.create_tables.label(class="form-check-label") }}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Form Controls -->
-        <div class="d-grid gap-2 mt-4">
-            <button type="submit" class="btn btn-primary btn-lg">
-                <i class="bi bi-save"></i> Save Task
+        <!-- Selection Controls -->
+        <div class="col-md-2 d-flex flex-column justify-content-center align-items-center">
+            <button type="button" class="btn btn-primary mb-2"
+                    onclick="addSelectedTables()">
+                <i class="bi bi-arrow-right"></i>
             </button>
-            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary btn-lg">
-                <i class="bi bi-x-circle"></i> Cancel
-            </a>
+            <button type="button" class="btn btn-secondary"
+                    onclick="removeSelectedTables()">
+                <i class="bi bi-arrow-left"></i>
+            </button>
         </div>
-    </form>
+
+        <!-- Selected Tables Panel -->
+        <div class="col-md-5">
+            <div class="input-group mb-3">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" id="selected-search" class="form-control"
+                       placeholder="Search selected..." onkeyup="filterSelected()">
+            </div>
+            <div class="card" style="max-height: 500px; overflow-y: auto;">
+                <div class="card-body" id="selected-list">
+                    <!-- Selected tables will be shown here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+    </div>
+
+    <!-- Replication Options -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="form-check form-switch">
+                {{ form.initial_load(class="form-check-input") }}
+                {{ form.initial_load.label(class="form-check-label") }}
+            </div>
+            <div class="form-check form-switch">
+                {{ form.create_tables(class="form-check-input") }}
+                {{ form.create_tables.label(class="form-check-label") }}
+            </div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Changes</button>
+</form>
 </div>
 
 <script>

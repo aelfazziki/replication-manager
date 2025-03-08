@@ -152,61 +152,45 @@ def edit_endpoint(endpoint_id):
 
 # Task editing
 @bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
-@bp.route('/task/create', methods=['GET', 'POST'])
-def edit_task(task_id=None):
-    task = ReplicationTask.query.get(task_id) if task_id else None
+def edit_task(task_id):
+    task = ReplicationTask.query.get_or_404(task_id)
     form = TaskForm()
 
-    # Populate endpoints
-    all_endpoints = Endpoint.query.all()
-    form.source.choices = [(str(e.id), e.name) for e in all_endpoints]
-    form.destination.choices = [(str(e.id), e.name) for e in all_endpoints]
+    # Populate endpoint choices
+    form.source.choices = [(str(e.id), e.name) for e in Endpoint.query.all()]
+    form.destination.choices = [(str(e.id), e.name) for e in Endpoint.query.all()]
 
     if form.validate_on_submit():
         try:
             # Get selected tables from hidden input
             selected_tables = json.loads(request.form.get('selected-tables', '[]'))
-            if not selected_tables:
-                raise ValueError("At least one table must be selected")
 
-            if task:
-                # Update existing task
-                task.name = form.name.data
-                task.source_id = int(form.source.data)
-                task.destination_id = int(form.destination.data)
-                task.tables = selected_tables
-                task.initial_load = form.initial_load.data
-                task.create_tables = form.create_tables.data
-            else:
-                # Create new task
-                task = ReplicationTask(
-                    name=form.name.data,
-                    source_id=int(form.source.data),
-                    destination_id=int(form.destination.data),
-                    tables=selected_tables,
-                    initial_load=form.initial_load.data,
-                    create_tables=form.create_tables.data,
-                    metrics={},  # Add this line
-                    status='stopped'
-                )
-                db.session.add(task)
+            # Update task properties
+            task.name = form.name.data
+            task.source_id = int(form.source.data)
+            task.destination_id = int(form.destination.data)
+            task.tables = selected_tables
+            task.initial_load = form.initial_load.data
+            task.create_tables = form.create_tables.data
+            task.replication_mode = form.replication_mode.data if hasattr(form, 'replication_mode') else 'full'
 
             db.session.commit()
-            flash('Task saved successfully', 'success')
+            flash('Task updated successfully', 'success')
             return redirect(url_for('web.dashboard'))
-
         except Exception as e:
             db.session.rollback()
-            flash(f'Error saving task: {str(e)}', 'danger')
-            current_app.logger.error(f"Task save error: {str(e)}", exc_info=True)
+            flash(f'Error updating task: {str(e)}', 'danger')
+            current_app.logger.error(f"Task update error: {str(e)}", exc_info=True)
 
-    # Prepopulate form for existing task
-    if task:
+    # Pre-populate form for existing task
+    if request.method == 'GET':
         form.name.data = task.name
         form.source.data = str(task.source_id)
         form.destination.data = str(task.destination_id)
         form.initial_load.data = task.initial_load
         form.create_tables.data = task.create_tables
+        if hasattr(form, 'replication_mode'):
+            form.replication_mode.data = task.replication_mode
 
     return render_template('edit_task.html', form=form, task=task)
 
