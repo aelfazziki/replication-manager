@@ -133,14 +133,15 @@
 
 <script>
 // Initialize selected tables from hidden field
-let selectedTables = new Set(JSON.parse(document.getElementById('selected-tables').value));
+//let selectedTables = new Set(JSON.parse(document.getElementById('selected-tables').value));
+// Initialize selectedTables as a Set
+let selectedTables = new Set();
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Load initial tables if editing existing task
-    {% if task %}
+    // Initialize from hidden input if editing
+    const initialTables = JSON.parse(document.getElementById('selected-tables').value || '[]');
+    selectedTables = new Set(initialTables);
     refreshSelectedList();
-    loadSourceTables();
-    {% endif %}
 });
 
 async function loadSourceTables() {
@@ -150,9 +151,6 @@ async function loadSourceTables() {
     try {
         const response = await fetch(`/api/source/${sourceId}/schemas`);
         const schemas = await response.json();
-
-        // Debugging log
-        console.log('Received schemas:', schemas);
 
         if (!Object.keys(schemas).length) {
             document.getElementById('schema-list').innerHTML = `
@@ -194,7 +192,7 @@ function renderSchemaList(schemas) {
                         <div class="form-check table-item">
                             <input class="form-check-input" type="checkbox"
                                    id="${schema}.${table}" value="${schema}.${table}"
-                                   ${selectedTables.has('${schema}.${table}') ? 'checked' : ''}>
+                                   ${selectedTables.has(`${schema}.${table}`) ? 'checked' : ''}>
                             <label class="form-check-label" for="${schema}.${table}">
                                 ${table}
                             </label>
@@ -206,6 +204,7 @@ function renderSchemaList(schemas) {
         container.appendChild(schemaDiv);
     });
 }
+
 function refreshSelectedList() {
     const container = document.getElementById('selected-list');
     container.innerHTML = Array.from(selectedTables).map(table => `
@@ -216,17 +215,33 @@ function refreshSelectedList() {
             </label>
         </div>
     `).join('') || `<div class="text-muted">No tables selected</div>`;
+    updateHiddenField();
 }
 
-// Add other functions (toggleSchema, addSelectedTables, removeSelectedTables, filter functions) from previous implementation
+function addSelectedTables() {
+    document.querySelectorAll('.table-item input:checked').forEach(checkbox => {
+        selectedTables.add(checkbox.value);
+    });
+    refreshSelectedList();
+}
+
+function removeSelectedTables() {
+    document.querySelectorAll('#selected-list input:checked').forEach(checkbox => {
+        selectedTables.delete(checkbox.value);
+    });
+    refreshSelectedList();
+}
+
+function updateHiddenField() {
+    document.getElementById('selected-tables').value = JSON.stringify(Array.from(selectedTables));
+}
+
 function toggleSchema(schema) {
     const tablesDiv = document.getElementById(`${schema}-tables`);
     const icon = tablesDiv.previousElementSibling.querySelector('i');
     tablesDiv.style.display = tablesDiv.style.display === 'none' ? 'block' : 'none';
-    icon.className = tablesDiv.style.display === 'none' ?
-        'bi bi-chevron-down' : 'bi bi-chevron-up';
+    icon.className = tablesDiv.style.display === 'none' ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
 }
-
 function addSelectedTables() {
     document.querySelectorAll('.table-item input:checked').forEach(checkbox => {
         selectedTables.add(checkbox.value);
