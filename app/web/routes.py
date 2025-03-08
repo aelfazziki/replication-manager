@@ -154,6 +154,8 @@ def edit_endpoint(endpoint_id):
 @bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
 def edit_task(task_id):
     task = ReplicationTask.query.get_or_404(task_id)
+    print("Task tables:", task.tables)  # Debugging
+
     form = TaskForm()
 
     # Populate endpoint choices
@@ -162,17 +164,24 @@ def edit_task(task_id):
 
     if form.validate_on_submit():
         try:
-            # Get selected tables from hidden input
-            selected_tables = json.loads(request.form.get('selected-tables', '[]'))
+            selected_tables = request.form.get('selected-tables', '[]')
 
-            # Update task properties
+            # Validate JSON format
+            if not selected_tables.strip():
+                selected_tables = '[]'
+
+            try:
+                task.tables = json.loads(selected_tables)
+            except json.JSONDecodeError as e:
+                current_app.logger.error(f"JSON decode error: {str(e)}")
+                task.tables = []
+
+            # Update other task properties
             task.name = form.name.data
             task.source_id = int(form.source.data)
             task.destination_id = int(form.destination.data)
-            task.tables = selected_tables
             task.initial_load = form.initial_load.data
             task.create_tables = form.create_tables.data
-            task.replication_mode = form.replication_mode.data if hasattr(form, 'replication_mode') else 'full'
 
             db.session.commit()
             flash('Task updated successfully', 'success')
@@ -189,8 +198,6 @@ def edit_task(task_id):
         form.destination.data = str(task.destination_id)
         form.initial_load.data = task.initial_load
         form.create_tables.data = task.create_tables
-        if hasattr(form, 'replication_mode'):
-            form.replication_mode.data = task.replication_mode
 
     return render_template('edit_task.html', form=form, task=task)
 

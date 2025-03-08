@@ -4,27 +4,30 @@
     <h2>{{ 'Edit' if task else 'Create' }} Replication Task</h2>
 <form method="POST" id="task-form">
     {{ form.hidden_tag() }}
+
+    <p>Task tables (before serialization): {{ task.tables }}</p>
+<!-- Debugging: Display serialized JSON value -->
+<p>Serialized JSON value: {{ task.tables | tojson | safe if task and task.tables is not none else '[]' }}</p>
+
     <input type="hidden" name="selected-tables" id="selected-tables"
-           value="{{ task.tables|tojson|safe if task else '[]' }}">
+       value="{{ task.tables | tojson | forceescape }}">
+<!-- Task Name Field -->
+<div class="form-group">
+    {{ form.name.label }}
+    {{ form.name(class="form-control", autocomplete="off") }}
+</div>
 
-    <!-- Task Details -->
-    <div class="form-group">
-        {{ form.name.label }}
-        {{ form.name(class="form-control") }}
+<!-- Source/Destination Selection -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        {{ form.source.label }}
+        {{ form.source(class="form-select", autocomplete="off") }}
     </div>
-
-    <!-- Source/Destination Selection -->
-    <div class="row mb-4">
-        <div class="col-md-6">
-            {{ form.source.label }}
-            {{ form.source(class="form-select") }}
-        </div>
-        <div class="col-md-6">
-            {{ form.destination.label }}
-            {{ form.destination(class="form-select") }}
-        </div>
+    <div class="col-md-6">
+        {{ form.destination.label }}
+        {{ form.destination(class="form-select", autocomplete="off") }}
     </div>
-
+</div>
     <!-- Table Selection -->
     <div class="card mb-4">
 <div class="card-header">
@@ -101,35 +104,74 @@
 
 <script>
 // Initialize selected tables from hidden field
-//let selectedTables = new Set(JSON.parse(document.getElementById('selected-tables').value));
-// Initialize selectedTables as a Set
 let selectedTables = new Set();
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize from hidden input if editing
-    const initialTables = JSON.parse(document.getElementById('selected-tables').value || '[]');
-    selectedTables = new Set(initialTables);
-    refreshSelectedList();
+    const hiddenField = document.getElementById('selected-tables');
+
+    // Debugging: Display the hidden field value
+    console.log('Hidden field value before parsing:', hiddenField.value);
+
+    // Ensure the value is valid JSON
+    let parsedValue = [];
+    try {
+        // Unescape the JSON string
+        const unescapedValue = hiddenField.value
+            .replace(/&quot;/g, '"') // Replace &quot; with "
+            .replace(/&amp;/g, '&'); // Replace &amp; with &
+
+        console.log('Unescaped value:', unescapedValue); // Debugging
+
+        if (unescapedValue.trim() === '[') {
+            // Handle edge case where value is just '['
+            console.warn('Invalid JSON detected: "[". Resetting to "[]".');
+            hiddenField.value = '[]';
+        }
+        parsedValue = JSON.parse(unescapedValue || '[]');
+    } catch (e) {
+        console.error("JSON Parse Error:", e);
+        console.error("Invalid JSON value:", hiddenField.value); // Debugging
+        hiddenField.value = '[]'; // Reset to valid JSON
+    }
+
+    selectedTables = new Set(parsedValue);
+    console.log('Selected tables after parsing:', selectedTables); // Debugging
+
+    refreshSelectedList(); // Populate selected tables panel
+
+    // Load schemas AND re-check boxes after rendering
+    if (document.getElementById('source').value) {
+        loadSourceTables().then(() => {
+            selectedTables.forEach(table => {
+                const checkbox = document.querySelector(`input[value="${table}"]`);
+                if (checkbox) checkbox.checked = true;
+            });
+            refreshSelectedList(); // Update selected panel
+        });
+    }
 });
 async function loadSourceTables() {
     const sourceId = document.getElementById('source').value;
-    if (!sourceId) return;
+    if (!sourceId) {
+        console.error('No source endpoint selected');
+        return;
+    }
 
     try {
         const response = await fetch(`/api/source/${sourceId}/schemas`);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
         const schemas = await response.json();
-
-        if (!Object.keys(schemas).length) {
-            document.getElementById('schema-list').innerHTML = `
-                <div class="alert alert-warning">
-                    No schemas found. Check connection settings.
-                </div>`;
-            return;
-        }
-
         renderSchemaList(schemas);
+
+        // Re-check boxes after rendering
+        selectedTables.forEach(table => {
+            const checkbox = document.querySelector(`input[value="${table}"]`);
+            if (checkbox) checkbox.checked = true;
+        });
+
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Schema load failed:', error);
         document.getElementById('schema-list').innerHTML = `
             <div class="alert alert-danger">
                 Error loading schemas: ${error.message}
@@ -174,15 +216,24 @@ function renderSchemaList(schemas) {
 
 function refreshSelectedList() {
     const container = document.getElementById('selected-list');
+    console.log('Selected tables:', Array.from(selectedTables)); // Debugging
+
     container.innerHTML = Array.from(selectedTables).map(table => `
-        <div class="form-check selected-item">
-            <input class="form-check-input" type="checkbox" id="sel-${table}" value="${table}">
-            <label class="form-check-label" for="sel-${table}">
-                ${table}
-            </label>
+        <div class="selected-item">
+            ${table}
+            <button type="button" class="btn btn-sm btn-danger float-end"
+                    onclick="removeSingleTable('${table}')">
+                <i class="bi bi-x"></i>
+            </button>
         </div>
     `).join('') || `<div class="text-muted">No tables selected</div>`;
+
     updateHiddenField();
+}
+
+function removeSingleTable(table) {
+    selectedTables.delete(table);
+    refreshSelectedList();
 }
 
 function addSelectedTables() {
@@ -200,7 +251,14 @@ function removeSelectedTables() {
 }
 
 function updateHiddenField() {
-    document.getElementById('selected-tables').value = JSON.stringify(Array.from(selectedTables));
+    try {
+        const selectedTablesValue = JSON.stringify(Array.from(selectedTables));
+        console.log('Updating hidden field with:', selectedTablesValue);
+        document.getElementById('selected-tables').value = selectedTablesValue;
+    } catch (error) {
+        console.error('Error updating hidden field:', error);
+        document.getElementById('selected-tables').value = '[]';
+    }
 }
 
 function toggleSchema(schema) {
@@ -208,25 +266,6 @@ function toggleSchema(schema) {
     const icon = tablesDiv.previousElementSibling.querySelector('i');
     tablesDiv.style.display = tablesDiv.style.display === 'none' ? 'block' : 'none';
     icon.className = tablesDiv.style.display === 'none' ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
-}
-function addSelectedTables() {
-    document.querySelectorAll('.table-item input:checked').forEach(checkbox => {
-        selectedTables.add(checkbox.value);
-    });
-    refreshSelectedList();
-    updateHiddenField();
-}
-
-function removeSelectedTables() {
-    document.querySelectorAll('#selected-list input:checked').forEach(checkbox => {
-        selectedTables.delete(checkbox.value);
-    });
-    refreshSelectedList();
-    updateHiddenField();
-}
-
-function updateHiddenField() {
-    document.getElementById('selected-tables').value = JSON.stringify(Array.from(selectedTables));
 }
 
 function filterSchemas() {
@@ -240,12 +279,11 @@ function filterSchemas() {
 function filterSelected() {
     const search = document.getElementById('selected-search').value.toLowerCase();
     document.querySelectorAll('#selected-list .selected-item').forEach(item => {
-        const table = item.querySelector('label').textContent.toLowerCase();
+        const table = item.textContent.toLowerCase();
         item.style.display = table.includes(search) ? 'block' : 'none';
     });
 }
 </script>
-
 <style>
 .schema-tables {
     max-height: 300px;

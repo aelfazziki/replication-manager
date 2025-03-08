@@ -1,4 +1,3 @@
-// Real-time metrics and control logic
 document.addEventListener('DOMContentLoaded', function() {
     // Update metrics every 2 seconds
     const updateInterval = 2000;
@@ -12,10 +11,36 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Metrics update function
-    async function updateTaskMetrics() {
+    // Function to check if all tasks are stopped
+    function areAllTasksStopped() {
+        const taskElements = document.querySelectorAll('[data-task-id]');
+        return Array.from(taskElements).every(taskElement => {
+            const statusBadge = taskElement.querySelector('.task-status-badge');
+            return statusBadge.textContent.trim().toLowerCase() === 'stopped';
+        });
+    }
+
+    // Stop the interval timer if all tasks are stopped
+    function updateTaskMetrics() {
+        if (!document.getElementById('task-monitor')) return;
+
+        // Stop the timer if all tasks are stopped
+        if (areAllTasksStopped()) {
+            console.log('All tasks are stopped. Stopping metrics updates.'); // Debugging
+            clearInterval(updateTimer);
+            return;
+        }
+
         document.querySelectorAll('[data-task-id]').forEach(async taskElement => {
             const taskId = taskElement.dataset.taskId;
+            const statusBadge = taskElement.querySelector('.task-status-badge');
+
+            // Skip fetching metrics if the task is stopped
+            if (statusBadge.textContent.trim().toLowerCase() === 'stopped') {
+                console.log(`Task ${taskId} is stopped. Skipping metrics update.`); // Debugging
+                return;
+            }
+
             try {
                 const response = await fetch(`/task/${taskId}/metrics`);
                 const metrics = await response.json();
@@ -33,18 +58,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     metrics.deletes || 0;
 
                 // Update status badge
-                const statusBadge = taskElement.querySelector('.task-status-badge');
-                if(metrics.status) {
+                if (metrics.status) {
                     statusBadge.className = `task-status-badge badge bg-${getStatusColor(metrics.status)}`;
                     statusBadge.textContent = metrics.status.toUpperCase();
                 }
-            } catch(error) {
+            } catch (error) {
                 console.error(`Error updating metrics for task ${taskId}:`, error);
             }
         });
     }
+});
 
-    function formatBytes(bytes) {
+function formatBytes(bytes) {
         if (!bytes) return '0 B';
         const k = 1024;
         const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -72,6 +97,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
 
                 if(response.ok) {
+                    console.log(`Task ${taskId} stopped successfully`); // Debugging
+
                     const taskElement = document.querySelector(`[data-task-id="${taskId}"]`);
                     taskElement.querySelector('.stop-task-btn').disabled = true;
                 }
