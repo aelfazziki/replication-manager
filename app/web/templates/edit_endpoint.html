@@ -67,6 +67,17 @@
         </div>
         {% endif %}
 
+        <div class="form-group">
+            {{ form.endpoint_type.label }}
+            {{ form.endpoint_type(class="form-control", onchange="toggleTargetSchema()") }}
+        </div>
+
+        <!-- Wrap target_schema in a container -->
+        <div id="target-schema-group" class="form-group" style="display: none;">
+            {{ form.target_schema.label }}
+            {{ form.target_schema(class="form-control", placeholder="Enter target schema (for destination endpoints)") }}
+        </div>
+
         <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
             <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
                 <i class="bi bi-plug"></i> Test Connection
@@ -80,6 +91,27 @@
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
+    const endpointTypeField = document.getElementById('endpoint_type');
+    const targetSchemaGroup = document.getElementById('target-schema-group');
+
+    // Function to toggle target_schema visibility
+    function toggleTargetSchema() {
+        if (endpointTypeField.value === 'target') {
+            targetSchemaGroup.style.display = 'block';
+        } else {
+            targetSchemaGroup.style.display = 'none';
+        }
+    }
+
+    // Add event listener for endpoint_type changes
+    endpointTypeField.addEventListener('change', toggleTargetSchema);
+
+    // Initial check on page load
+    toggleTargetSchema();
+});
+
+// Function to test connection
 async function testConnection() {
     const form = document.getElementById('endpoint-form');
     const formData = new FormData(form);

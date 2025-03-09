@@ -13,20 +13,17 @@ from wtforms.validators import DataRequired, Length
 
 class EndpointForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
-    type = SelectField('Type', choices=[
-        ('oracle', 'Oracle'),
-        ('mysql', 'MySQL'),
-        ('bigquery', 'BigQuery')
-    ], validators=[DataRequired()])
-    host = StringField('Host')
-    port = IntegerField('Port')
-    service_name = StringField('Service Name')
-    database = StringField('Database')
-    username = StringField('Username')
-    password = PasswordField('Password')
-    dataset = StringField('Dataset')
-    credentials_json = TextAreaField('Credentials JSON')
-    submit = SubmitField('Save')
+    type = SelectField('Type', choices=[('oracle', 'Oracle'), ('mysql', 'MySQL'), ('bigquery', 'BigQuery')])
+    endpoint_type = SelectField('Endpoint Type', choices=[('source', 'Source'), ('target', 'Target')], default='source')
+    username = StringField('Username', validators=[DataRequired()])
+    password = PasswordField('Password', validators=[DataRequired()])
+    host = StringField('Host')  # For oracle/mysql
+    port = IntegerField('Port')  # For oracle/mysql
+    service_name = StringField('Service Name')  # For oracle
+    dataset = StringField('Dataset')  # For bigquery
+    credentials_json = TextAreaField('Credentials JSON')  # For bigquery
+    database = StringField('Database')  # For mysql
+    target_schema = StringField('Target Schema')  # New field for target schema
 
 class TaskForm(FlaskForm):
     name = StringField('Name', validators=[

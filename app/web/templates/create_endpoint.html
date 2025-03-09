@@ -17,7 +17,7 @@
             {{ form.type(class="form-control", onchange="updateFormFields()") }}
         </div>
 
-        <!-- Champs dynamiques -->
+        <!-- Dynamic fields -->
         <div id="oracleFields" class="database-fields">
             {{ form.host.label }}
             {{ form.host(class="form-control") }}
@@ -52,6 +52,17 @@
             {{ form.password(class="form-control") }}
         </div>
 
+        <div class="form-group">
+            {{ form.endpoint_type.label }}
+            {{ form.endpoint_type(class="form-control", onchange="toggleTargetSchema()") }}
+        </div>
+
+        <!-- Wrap target_schema in a container -->
+        <div id="target-schema-group" class="form-group" style="display: none;">
+            {{ form.target_schema.label }}
+            {{ form.target_schema(class="form-control", placeholder="Enter target schema (for destination endpoints)") }}
+        </div>
+
         <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
             <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
                 <i class="bi bi-plug"></i> Test Connection
@@ -67,16 +78,36 @@
 </div>
 
 <script>
-// Affiche/masque les champs spécifiques
+document.addEventListener('DOMContentLoaded', function() {
+    const endpointTypeField = document.getElementById('endpoint_type');
+    const targetSchemaGroup = document.getElementById('target-schema-group');
+
+    // Function to toggle target_schema visibility
+    function toggleTargetSchema() {
+        if (endpointTypeField.value === 'target') {
+            targetSchemaGroup.style.display = 'block';
+        } else {
+            targetSchemaGroup.style.display = 'none';
+        }
+    }
+
+    // Add event listener for endpoint_type changes
+    endpointTypeField.addEventListener('change', toggleTargetSchema);
+
+    // Initial check on page load
+    toggleTargetSchema();
+});
+
+// Function to update form fields based on type
 function updateFormFields() {
     const type = document.getElementById('type').value;
     document.querySelectorAll('.database-fields').forEach(div => div.style.display = 'none');
     document.getElementById(type + 'Fields').style.display = 'block';
 }
 
-// Test de connexion AJAX
+// Function to test connection
 async function testConnection() {
-    const formData = new FormData(document.getElementById('endpoint-form'));
+    const formData = new FormData(document.getElementById('endpointForm'));
     try {
         const response = await fetch("{{ url_for('web.test_connection') }}", {
             method: 'POST',
@@ -89,7 +120,7 @@ async function testConnection() {
     }
 }
 
-// Initialisation
+// Initialize form fields on page load
 document.addEventListener('DOMContentLoaded', updateFormFields);
 </script>
 

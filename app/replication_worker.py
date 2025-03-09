@@ -1,19 +1,35 @@
-from app import db
-from app.models import ReplicationTask
+import hashlib
 from datetime import datetime
 import time
+from app import db, create_app
+from app.models import ReplicationTask
+from app.services.metadata_service import MetadataService
 
+def generate_hash(data):
+    return hashlib.sha256(str(data).encode()).hexdigest()
 
-def run_replication(task_id):
-    # Create a new app instance for this thread
-    from app import create_app
+def run_replication(task_id, initial_load=False, resume=False):
     app = create_app()
-
     with app.app_context():
         task = ReplicationTask.query.get(task_id)
         if not task:
             return
+        source = task.source
+        destination = task.destination
 
+        # Validate source and destination endpoints
+        if source.endpoint_type != 'source':
+           raise ValueError("Source endpoint must be of type 'source'.")
+        if destination.endpoint_type != 'target':
+           raise ValueError("Destination endpoint must be of type 'target'.")
+
+        # Use target_schema in the replication logic
+        target_schema = destination.target_schema
+        if not target_schema:
+           raise ValueError("Target schema is not specified for the destination endpoint.")
+
+        # Example: Create schema if it doesn't exist
+        MetadataService.create_schema_if_not_exists(destination, target_schema)
         task.status = 'running'
         task.metrics = {
             'inserts': 0,
@@ -30,7 +46,15 @@ def run_replication(task_id):
                 start_time = time.time()
 
                 # Simulate replication work
-                time.sleep(2)
+                if initial_load:
+                    # Perform initial load
+                    pass
+                elif resume:
+                    # Resume from last position
+                    pass
+                else:
+                    # Incremental replication
+                    pass
 
                 # Update metrics
                 task.metrics.update({
