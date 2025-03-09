@@ -260,9 +260,13 @@ def test_connection():
 @bp.route('/task/<int:task_id>/stop', methods=['POST'])
 def stop_task(task_id):
     task = ReplicationTask.query.get_or_404(task_id)
-    task.status = 'stopped'
-    db.session.commit()
-    return jsonify({'status': 'success', 'message': 'Task stopping'})
+    if task:
+        # Update the task status to 'stopped'
+        task.status = 'stopped'
+        db.session.commit()
+        return jsonify({"success": True, "status": "stopped"}), 200
+    else:
+        return jsonify({"success": False, "message": "Task not found"}), 404
 
 @bp.route('/task/<int:task_id>/metrics')
 def get_metrics(task_id):
