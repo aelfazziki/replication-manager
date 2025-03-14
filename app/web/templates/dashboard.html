@@ -79,9 +79,13 @@
        class="btn btn-sm btn-primary">
         Edit
     </a>
-</div>
-
-                </div>
+    <!-- Add the Delete button -->
+    <button class="btn btn-sm btn-danger delete-task-btn"
+            data-task-id="{{ task.id }}"
+            onclick="confirmDeleteTask({{ task.id }})">
+        Delete
+    </button>
+</div>                </div>
             </div>
         </div>
     </div>

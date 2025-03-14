@@ -71,17 +71,26 @@ def create_task():
                 status='stopped',
                 tables={},  # Add default empty values for other required fields
                 cdc_config={},
-                options={}
+                options={},
+                metrics={  # Initialize metrics with default values
+                    'inserts': 0,
+                    'updates': 0,
+                    'deletes': 0,
+                    'bytes_processed': 0,
+                    'latency': 0,
+                    'last_updated': datetime.utcnow().isoformat(),
+                    'last_position': 0
+                }
             )
 
             db.session.add(new_task)
             db.session.commit()
-            flash('Tâche créée avec succès', 'success')
+            flash('Task created successfully', 'success')
             return redirect(url_for('web.dashboard'))
 
         except Exception as e:
             db.session.rollback()
-            flash(f'Erreur de création: {str(e)}', 'danger')
+            flash(f'Error creating task: {str(e)}', 'danger')
 
     return render_template('create_task.html', form=form)
 
@@ -139,32 +148,41 @@ def edit_task(task_id):
 
     return render_template('edit_task.html', form=form, task=task)
 
-@bp.route('/task/delete/<int:task_id>')
+@bp.route('/task/delete/<int:task_id>', methods=['POST'])
 def delete_task(task_id):
     task = ReplicationTask.query.get_or_404(task_id)
-    db.session.delete(task)
-    db.session.commit()
-    flash('Tâche supprimée', 'info')
-    return redirect(url_for('web.dashboard'))
-
+    try:
+        db.session.delete(task)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Task deleted successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "message": str(e)}), 500
 
 # Remove the top-level import
 # from app.replication_worker import run_replication
 
 @bp.route('/task/control/<int:task_id>/<action>')
 def control_task(task_id, action):
-    # Import inside the route function
     from app.replication_worker import run_replication
     from threading import Thread
 
     task = ReplicationTask.query.get_or_404(task_id)
     if action == 'start':
         task.status = 'running'
-        Thread(target=run_replication, args=(task.id,)).start()
+        Thread(target=run_replication, args=(task.id, True, False)).start()  # Initial load
         flash('Task started successfully', 'success')
+    elif action == 'reload':
+        task.status = 'running'
+        Thread(target=run_replication, args=(task.id, False, True)).start()  # Full reload
+        flash('Task reload started successfully', 'success')
+    elif action == 'resume':
+        task.status = 'running'
+        Thread(target=run_replication, args=(task.id, False, False)).start()  # Resume from last position
+        flash('Task resumed successfully', 'success')
     elif action == 'stop':
         task.status = 'stopped'
-        flash('Task stop requested', 'info')
+        flash('Task stopped successfully', 'info')
     db.session.commit()
     return redirect(url_for('web.dashboard'))
 

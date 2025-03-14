@@ -168,3 +168,26 @@ async function confirmStopTask(taskId) {
         }
     }
 }
+function confirmDeleteTask(taskId) {
+    if (confirm("Are you sure you want to delete this task?")) {
+        fetch(`/task/delete/${taskId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Reload the page to reflect the changes
+                window.location.reload();
+            } else {
+                alert("Failed to delete task: " + data.message);
+            }
+        })
+        .catch(error => {
+            console.error("Error deleting task:", error);
+            alert("An error occurred while deleting the task.");
+        });
+    }
+}

@@ -1,4 +1,5 @@
 from .. import db
+from datetime import datetime  # Add this import
 
 
 class ReplicationTask(db.Model):
@@ -19,6 +20,15 @@ class ReplicationTask(db.Model):
     initial_load = db.Column(db.Boolean, default=False)
     create_tables = db.Column(db.Boolean, default=True)
     replication_mode = db.Column(db.String(20), default='full')  # full/partial
+    metrics = db.Column(db.JSON, default={  # Initialize metrics with default values
+        'inserts': 0,
+        'updates': 0,
+        'deletes': 0,
+        'bytes_processed': 0,
+        'latency': 0,
+        'last_updated': datetime.utcnow().isoformat(),
+        'last_position': 0
+    })
 
     # Fixed relationships (removed duplicates)
     source = db.relationship('Endpoint', foreign_keys=[source_id], backref='source_tasks')
