@@ -303,8 +303,9 @@ def get_metrics(task_id):
     task = ReplicationTask.query.get_or_404(task_id)
     return jsonify({
         'status': task.status,
-        **(task.metrics or {})  # Handle None case
-    })
+        'metrics': task.metrics or {}
+    })\
+
 @bp.route('/task/<int:task_id>/reload', methods=['POST'])
 def reload_task(task_id):
     from app.replication_worker import run_replication

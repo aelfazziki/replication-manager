@@ -3,7 +3,7 @@ from datetime import datetime
 import time
 from app import db, create_app
 from app.models import ReplicationTask
-from app.services.metadata_service import MetadataService
+from app.services.metadata_service import MetadataService,perform_initial_load
 
 def generate_hash(data):
     return hashlib.sha256(str(data).encode()).hexdigest()
@@ -34,6 +34,8 @@ def run_replication(task_id, initial_load=False, reload=False, tables_to_reload=
         MetadataService.create_schema_if_not_exists(destination, target_schema)
         # Add table creation logic for initial load
         if initial_load:
+            app.logger.info(f"initial_load flag set to {initial_load}.")
+
             # Get the list of tables selected for replication
             tables_to_replicate = task.tables  # Ensure this field contains the selected tables
             if not tables_to_replicate:
@@ -46,17 +48,72 @@ def run_replication(task_id, initial_load=False, reload=False, tables_to_reload=
                 if '.' not in full_table_name:
                     raise ValueError(f"Invalid table name format: {full_table_name}. Expected 'schema.table'.")
                 source_schema, table_name = full_table_name.split('.', 1)  # Split on the first dot
+                if not MetadataService.is_table_exists(destination,target_schema,table_name):
+                    # Call create table
+                    app.logger.info(f" table {target_schema}.{table_name} doesn't exist....")
 
-                # Call table creation for each table
-                success = MetadataService.create_tables_if_not_exists(
-                    source_endpoint=source,
-                    target_endpoint=destination,
-                    source_schema=source_schema,  # Extracted schema (e.g., "AEF")
-                    target_schema=target_schema,  # Target schema (e.g., "AEF_TRGT")
-                    table_name=table_name  # Extracted table name (e.g., "AEF_TEST")
-                )
-                if not success:
-                    raise Exception(f"Failed to create table {table_name} in target schema.")
+                    success = MetadataService.create_tables_if_not_exists(
+                       source_endpoint=source,
+                       target_endpoint=destination,
+                       source_schema=source_schema,  # Extracted schema (e.g., "AEF")
+                       target_schema=target_schema,  # Target schema (e.g., "AEF_TRGT")
+                       table_name=table_name  # Extracted table name (e.g., "AEF_TEST")
+                              )
+                    if success:
+                        app.logger.info(f"table {target_schema}.{table_name} created successfully.")
+                        # perform an initial load
+                        success_init_flag = perform_initial_load(
+                              source_endpoint=source,
+                              target_endpoint=destination,
+                              source_schema=source_schema,
+                              target_schema=target_schema,
+                              table_name=table_name
+                              )
+                        if success_init_flag:
+                            app.logger.info(
+                                  f"Initial load for table {target_schema}.{table_name} completed successfully.")
+                        else:
+                              app.logger.info(
+                                  f"Initial load for table {target_schema}.{table_name} Failed.")
+                    else:
+                          raise Exception(f"Failed to create table {table_name} in target schema.")
+        else:
+            # Add new tables and perform an initial load of new tables
+            if task.tables:
+                for full_table_name in task.tables:
+                    # Split into schema and table name
+                    if '.' not in full_table_name:
+                        raise ValueError(f"Invalid table name format: {full_table_name}. Expected 'schema.table'.")
+                    source_schema, table_name = full_table_name.split('.', 1)  # Split on the first dot
+                    if not MetadataService.is_table_exists(destination, target_schema, table_name):
+                        # Call table creation for each table
+                        success = MetadataService.create_tables_if_not_exists(
+                            source_endpoint=source,
+                            target_endpoint=destination,
+                            source_schema=source_schema,  # Extracted schema (e.g., "AEF")
+                            target_schema=target_schema,  # Target schema (e.g., "AEF_TRGT")
+                            table_name=table_name  # Extracted table name (e.g., "AEF_TEST")
+                        )
+                        # perform an initial load
+                        if success:
+                            app.logger.info(
+                                f"Initial load for table {target_schema}.{table_name} completed successfully.")
+                            success_init_flag = perform_initial_load(
+                                source_endpoint=source,
+                                target_endpoint=destination,
+                                source_schema=source_schema,
+                                target_schema=target_schema,
+                                table_name=table_name
+                            )
+                            if success_init_flag:
+                                app.logger.info(
+                                    f"Initial load for table {target_schema}.{table_name} completed successfully.")
+                            else:
+                                app.logger.info(
+                                    f"Initial load for table {target_schema}.{table_name} Failed.")
+
+                        else:
+                            raise Exception(f"Failed to create new table {table_name} in target schema.")
 
         # Initialize task status and metrics if not already set
         if task.metrics is None:

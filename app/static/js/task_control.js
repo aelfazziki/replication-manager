@@ -49,7 +49,35 @@ function areAllTasksStopped() {
     });
 }
 
-async function updateTaskMetrics() {
+function updateTaskMetrics(taskId) {
+    fetch(`/task/${taskId}/metrics`)
+        .then(response => response.json())
+        .then(data => {
+            // Update numeric values
+            ['inserts', 'updates', 'deletes'].forEach(metric => {
+                document.querySelector(`[data-metric="${metric}"]`).textContent =
+                    data.metrics[metric] || 0;
+            });
+
+            // Format bytes
+            const bytes = data.metrics['bytes_processed'] || 0;
+            document.querySelector('[data-metric="bytes_processed"]').textContent =
+                formatBytes(bytes);
+        });
+}
+
+// Helper to format bytes
+function formatBytes(bytes) {
+    if (bytes === 0) return '0B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + sizes[i];
+}
+
+// Update every 5 seconds
+setInterval(() => updateTaskMetrics(taskId), 5000);
+async function oldupdateTaskMetrics() {
     if (!document.getElementById('task-monitor')) return;
 
     // Stop the timer if all tasks are stopped
@@ -105,7 +133,7 @@ async function updateTaskMetrics() {
 }
 
 // Helper function to format bytes
-function formatBytes(bytes) {
+function oldformatBytes(bytes) {
     if (!bytes) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -191,3 +219,4 @@ function confirmDeleteTask(taskId) {
         });
     }
 }
+setInterval(() => updateTaskMetrics(taskId), 5000);

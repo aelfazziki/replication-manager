@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from google.cloud import bigquery
@@ -18,6 +20,25 @@ class MetadataService:
         elif endpoint.type == 'bigquery':
             return MetadataService._create_bigquery_schema(endpoint, schema_name)
         return False
+
+    @staticmethod
+    def is_table_exists( endpoint, schema, table_name):
+        try:
+            # Get connection strings
+            conn_str = _get_connection_string(endpoint, schema)
+            engine = create_engine(conn_str)
+
+            with engine.connect() as conn:
+                # Check if table exists in target
+                if MetadataService._table_exists(conn, schema, table_name):
+                    current_app.logger.info(f"Table {schema}.{table_name} already exists.")
+                    return True
+                else :
+                    return False
+        except Exception as e:
+            current_app.logger.error(f"Failed to create table {table_name}: {str(e)}")
+            return False
+
 
     @staticmethod
     def create_tables_if_not_exists(source_endpoint, target_endpoint, source_schema, target_schema, table_name):
@@ -74,38 +95,50 @@ class MetadataService:
             current_app.logger.error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
+    @staticmethod
     def _perform_initial_load(source_conn, target_conn, schema_name, table):
         try:
-            # Fetch primary keys for the table
-            current_app.logger.info(f"Fetching primary keys for table {schema_name}.{table}.")
-            primary_keys = _get_primary_keys(source_conn, schema_name, table)
+            # Get identifier columns with fallback logic
+            identifier_columns, identifier_type = _get_identifier_columns(source_conn, schema_name, table)
+
+            current_app.logger.info(
+                f"Using {identifier_type} for table {schema_name}.{table}: {identifier_columns}"
+            )
 
             # Fetch data from the source table
-            current_app.logger.info(f"Fetching data from source table {schema_name}.{table}.")
             data = source_conn.execute(text(f"SELECT * FROM {schema_name}.{table}")).fetchall()
 
             if data:
-                # Get column names
-                columns = data[0].keys()
+                # Get column names (case-insensitive)
+                columns = [col.upper() for col in data[0].keys() if not col.upper().startswith('META_')]
 
-                # Insert data into the target table with metadata columns
-                current_app.logger.info(f"Inserting data into target table {schema_name}.{table}.")
+                # Validate identifier columns exist in source
+                missing_cols = [col for col in identifier_columns if col not in columns]
+                if missing_cols:
+                    raise ValueError(f"Identifier columns {missing_cols} missing in source table")
+
+                # Insert data with metadata
                 for row in data:
-                    # Calculate meta_hash_pk and meta_hash_data
-                    meta_hash_pk = _calculate_hash([str(row[col]) for col in primary_keys])
-                    meta_hash_data = _calculate_hash([str(row[col]) for col in columns])
+                    row_dict = {k.upper(): v for k, v in row._mapping.items()}
 
-                    # Prepare the insert query
-                    insert_query = f"""
-                    INSERT INTO {schema_name}.{table} ({', '.join(columns)}, meta_hash_pk, meta_hash_data, meta_create_timestamp, meta_update_timestamp)
-                    VALUES ({', '.join([':' + col for col in columns])}, :meta_hash_pk, :meta_hash_data, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """
-                    target_conn.execute(text(insert_query),
-                                        {**row, 'meta_hash_pk': meta_hash_pk, 'meta_hash_data': meta_hash_data})
+                    # Calculate hashes using identifier columns
+                    meta_hash_pk = _calculate_hash([str(row_dict[col]) for col in identifier_columns])
+                    meta_hash_data = _calculate_hash([str(row_dict[col]) for col in columns])
 
-                current_app.logger.info(f"Initial load for table {schema_name}.{table} completed successfully.")
-            else:
-                current_app.logger.info(f"No data found in source table {schema_name}.{table}.")
+                    insert_query = text(f"""
+                        INSERT INTO {schema_name}.{table} 
+                        ({', '.join(columns)}, meta_hash_pk, meta_hash_data, meta_create_timestamp)
+                        VALUES ({', '.join([f':{col}' for col in columns])}, 
+                                :meta_hash_pk, :meta_hash_data, CURRENT_TIMESTAMP)
+                    """)
+                    target_conn.execute(insert_query, {
+                        **row_dict,
+                        'meta_hash_pk': meta_hash_pk,
+                        'meta_hash_data': meta_hash_data
+                    })
+
+                current_app.logger.info(f"Initial load completed for {schema_name}.{table} ({len(data)} rows)")
+
             return True
         except Exception as e:
             current_app.logger.error(f"Initial load error: {str(e)}")
@@ -322,6 +355,7 @@ def _add_metadata_columns(table_definition):
 
     return modified_definition
 
+@staticmethod
 def _perform_initial_load(source_conn, target_conn, schema_name, table):
     try:
         # Fetch primary keys for the table
@@ -353,83 +387,228 @@ def _perform_initial_load(source_conn, target_conn, schema_name, table):
         return False
 
 
-def _get_primary_keys(conn, schema_name, table):
+def _get_primary_keys(conn, schema_name, table_name):
     try:
-        # Fetch primary key columns for the table
-        result = conn.execute(text(f"""
-            SELECT column_name 
-            FROM information_schema.key_column_usage 
-            WHERE table_schema = :schema AND table_name = :table AND constraint_name = 'PRIMARY'
-        """), {'schema': schema_name, 'table': table})
-        return [row[0] for row in result]
+        # Oracle-specific primary key detection (uppercase normalized)
+        query = text("""
+            SELECT cols.column_name
+            FROM all_constraints cons
+            JOIN all_cons_columns cols 
+            ON cons.constraint_name = cols.constraint_name
+            AND cons.owner = cols.owner
+            WHERE cons.owner = :schema
+            AND cons.table_name = :table
+            AND cons.constraint_type = 'P'
+            ORDER BY cols.position
+        """)
+        result = conn.execute(query,
+                              {'schema': schema_name.upper(),
+                               'table': table_name.upper()})
+        primary_keys = [row[0].upper() for row in result]  # Force uppercase
+
+        if not primary_keys:
+            current_app.logger.warning(f"No primary key found for {schema_name}.{table_name}")
+            # Fallback to all columns
+            result = conn.execute(text("""
+                SELECT column_name 
+                FROM all_tab_columns 
+                WHERE owner = :schema 
+                AND table_name = :table
+            """), {'schema': schema_name.upper(), 'table': table_name.upper()})
+            primary_keys = [row[0].upper() for row in result]  # Force uppercase
+
+        return primary_keys
+
     except Exception as e:
         current_app.logger.error(f"Primary key fetch error: {str(e)}")
         return []
-
 
 def _calculate_hash(values):
     # Calculate a hash of the given values
     return hashlib.sha256(''.join(values).encode()).hexdigest()
 
 
-class MetadataService:
-    @staticmethod
-    def perform_initial_load(source_endpoint, target_endpoint, source_schema, target_schema, table_name):
-        try:
-            # Get connections
-            source_conn_str = _get_connection_string(source_endpoint, source_schema)
-            target_conn_str = _get_connection_string(target_endpoint, target_schema)
+def perform_initial_load(source_endpoint, target_endpoint, source_schema, target_schema, table_name):
+    try:
+        metrics = {
+            'inserts': 0,
+            'bytes_processed': 0
+        }
 
-            source_engine = create_engine(source_conn_str)
-            target_engine = create_engine(target_conn_str)
+        source_conn_str = _get_connection_string(source_endpoint, source_schema)
+        target_conn_str = _get_connection_string(target_endpoint, target_schema)
 
-            with source_engine.connect() as source_conn, \
-                    target_engine.connect() as target_conn:
+        source_engine = create_engine(source_conn_str)
+        target_engine = create_engine(target_conn_str)
 
-                # Get primary keys for hash calculation
-                primary_keys = _get_primary_keys(source_conn, source_schema, table_name)
+        with source_engine.connect() as source_conn, \
+                target_engine.connect() as target_conn:
 
-                # Fetch data from source
-                result = source_conn.execute(text(f"SELECT * FROM {source_schema}.{table_name}"))
-                rows = result.fetchall()
+            # Get identifier columns using fallback logic
+            identifier_columns, identifier_type = _get_identifier_columns(
+                source_conn, source_schema, table_name
+            )
 
-                if rows:
-                    # Get column names (excluding metadata columns)
-                    columns = [col for col in rows[0].keys() if not col.startswith('meta_')]
-                    col_names = ', '.join(columns)
-                    placeholders = ', '.join([f":{col}" for col in columns])
+            if not identifier_columns:
+                raise ValueError(f"No identifiable columns found for {source_schema}.{table_name}")
 
-                    # Prepare insert statement
-                    insert_stmt = f"""
-                        INSERT INTO {target_schema}.{table_name} 
-                        ({col_names}, meta_hash_pk, meta_hash_data, meta_create_timestamp)
-                        VALUES ({placeholders}, :meta_hash_pk, :meta_hash_data, CURRENT_TIMESTAMP)
-                    """
+            current_app.logger.info(
+                f"Using {identifier_type} columns for {source_schema}.{table_name}: {identifier_columns}"
+            )
 
-                    # Insert data in batches
-                    batch_size = 1000
-                    for i in range(0, len(rows), batch_size):
-                        batch = rows[i:i + batch_size]
-                        for row in batch:
-                            # Calculate hashes
-                            meta_hash_pk = _calculate_hash([str(row[col]) for col in primary_keys])
-                            meta_hash_data = _calculate_hash([str(row[col]) for col in columns])
+            # Get primary keys (uppercase)
+            primary_keys = [pk.upper() for pk in _get_primary_keys(source_conn, source_schema, table_name)]
 
-                            # Prepare parameters
-                            params = {col: row[col] for col in columns}
-                            params.update({
-                                'meta_hash_pk': meta_hash_pk,
-                                'meta_hash_data': meta_hash_data
-                            })
+            if not primary_keys:
+                raise ValueError(f"No columns found for {source_schema}.{table_name}")
 
-                            target_conn.execute(text(insert_stmt), params)
+            # Fetch data and get column names (uppercase)
+            result = source_conn.execute(
+                text(f"SELECT * FROM {source_schema}.{table_name}")
+            )
+            columns = [col.upper() for col in result.keys() if not col.upper().startswith('META_')]
 
-                        target_conn.commit()
+            # Verify primary keys exist in columns
+            missing_pks = [pk for pk in primary_keys if pk not in columns]
+            if missing_pks:
+                raise ValueError(f"Primary keys {missing_pks} missing in source table")
 
-                    current_app.logger.info(f"Initial load completed for {table_name} ({len(rows)} rows)")
+            # Prepare insert statement
+            insert_stmt = text(f"""
+                INSERT INTO {target_schema}.{table_name} 
+                ({', '.join(columns)}, meta_hash_pk, meta_hash_data, meta_create_timestamp)
+                VALUES ({', '.join([f':{col}' for col in columns])}, 
+                        :meta_hash_pk, :meta_hash_data, CURRENT_TIMESTAMP)
+            """)
 
-                return True
+            # Batch processing with case-insensitive access
+            batch_size = 1000
+            while True:
+                batch = result.fetchmany(batch_size)
+                if not batch:
+                    break
 
-        except Exception as e:
-            current_app.logger.error(f"Initial load failed for {table_name}: {str(e)}")
-            return False
+                # Calculate batch metrics
+                batch_bytes = sum(len(str(row).encode('utf-8')) for row in batch)
+                metrics['inserts'] += len(batch)
+                metrics['bytes_processed'] += batch_bytes
+
+                params_list = []
+                for row in batch:
+                    row_dict = {k.upper(): v for k, v in row._mapping.items()}  # Case-insensitive access
+
+                    # Calculate hashes using uppercase keys
+                    meta_hash_pk = _calculate_hash([str(row_dict[pk]) for pk in primary_keys])
+                    meta_hash_data = _calculate_hash([str(row_dict[col]) for col in columns])
+
+                    params = {col: row_dict[col] for col in columns}
+                    params.update({
+                        'meta_hash_pk': meta_hash_pk,
+                        'meta_hash_data': meta_hash_data
+                    })
+                    params_list.append(params)
+
+                target_conn.execute(insert_stmt, params_list)
+                target_conn.commit()
+
+                current_app.logger.debug(
+                    f"Processed batch - "
+                    f"Rows: {len(batch)}, "
+                    f"Bytes: {batch_bytes}"
+                )
+
+            current_app.logger.info(
+                f"Initial load completed - "
+                f"Total rows: {metrics['inserts']}, "
+                f"Total data: {metrics['bytes_processed']} bytes"
+            )
+            return metrics
+
+    except Exception as e:
+        current_app.logger.error(f"Initial load failed for {table_name}: {str(e)}", exc_info=True)
+        return False
+
+def _get_primary_key_columns(conn, schema_name, table_name):
+    # Existing PK detection logic
+    query = text("""
+        SELECT cols.column_name
+        FROM all_constraints cons
+        JOIN all_cons_columns cols 
+        ON cons.constraint_name = cols.constraint_name
+        AND cons.owner = cols.owner
+        WHERE cons.owner = :schema
+        AND cons.table_name = :table
+        AND cons.constraint_type = 'P'
+        ORDER BY cols.position
+    """)
+    result = conn.execute(query, {'schema': schema_name.upper(), 'table': table_name.upper()})
+    return [row[0].upper() for row in result]
+
+
+def _get_identifier_columns(conn, schema_name, table_name):
+    """Get best available identifier columns (PK > Unique Index > All Columns)"""
+    try:
+        # 1. Try Primary Key
+        pk_cols = _get_primary_key_columns(conn, schema_name, table_name)
+        if pk_cols:
+            return pk_cols, "primary key"
+
+        # 2. Try Unique Indexes
+        unique_cols = _get_unique_index_columns(conn, schema_name, table_name)
+        if unique_cols:
+            return unique_cols, "unique index"
+
+        # 3. Fallback to All Columns
+        all_cols = _get_all_columns(conn, schema_name, table_name)
+        if not all_cols:
+            raise ValueError(f"No columns found for {schema_name}.{table_name}")
+        return all_cols, "all columns"
+
+    except Exception as e:
+        current_app.logger.error(f"Identifier detection error: {str(e)}")
+        return [], "none"
+
+
+def _get_unique_index_columns(conn, schema_name, table_name):
+    """Get columns from first non-system unique index"""
+    try:
+        query = text("""
+            SELECT cols.column_name, cols.column_position
+            FROM all_indexes idx
+            JOIN all_ind_columns cols
+            ON idx.index_name = cols.index_name
+            AND idx.table_owner = cols.table_owner
+            WHERE idx.table_owner = :schema
+            AND idx.table_name = :table
+            AND idx.uniqueness = 'UNIQUE'
+            AND idx.index_name NOT LIKE 'SYS_%'
+            ORDER BY cols.index_name, cols.column_position
+        """)
+        result = conn.execute(query, {
+            'schema': schema_name.upper(),
+            'table': table_name.upper()
+        })
+
+        # Group columns by index
+        index_map = defaultdict(list)
+        for row in result:
+            index_map[row[0]].append(row[1].upper())  # Store column positions by index name
+
+        # Return columns from first valid index
+        return next(iter(index_map.values()), [])
+
+    except Exception as e:
+        current_app.logger.error(f"Unique index detection error: {str(e)}")
+        return []
+
+def _get_all_columns(conn, schema_name, table_name):
+    """Get all table columns"""
+    query = text("""
+        SELECT column_name 
+        FROM all_tab_columns 
+        WHERE owner = :schema 
+        AND table_name = :table
+        ORDER BY column_id
+    """)
+    result = conn.execute(query, {'schema': schema_name.upper(), 'table': table_name.upper()})
+    return [row[0].upper() for row in result]
