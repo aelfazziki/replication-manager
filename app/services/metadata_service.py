@@ -249,37 +249,44 @@ class MetadataService:
 
     @staticmethod
     def _get_oracle_schemas(endpoint_data):
+        current_app.logger.debug(f"Fetching schemas for Oracle endpoint: {endpoint_data}")
         try:
             dsn = cx_Oracle.makedsn(
                 endpoint_data['host'],
                 endpoint_data['port'],
                 service_name=endpoint_data['service_name']
             )
-
             engine = create_engine(
                 f"oracle+cx_oracle://{endpoint_data['username']}:{endpoint_data['password']}@",
                 connect_args={"dsn": dsn},
                 max_identifier_length=128
             )
-
             with engine.connect() as conn:
                 schemas = {}
-                result = conn.execute(text("SELECT username FROM all_users ORDER BY username"))
+                # Get all schemas (excluding system users)
+                result = conn.execute(text("""
+                    SELECT username 
+                    FROM dba_users 
+                    WHERE account_status = 'OPEN'
+                      AND username NOT IN ('SYS','SYSTEM','DBSNMP','XDB')
+                    ORDER BY username
+                """))
                 for row in result:
                     schema = row[0]
                     try:
-                        tables = conn.execute(text(f"""
+                        # Get all tables for the schema
+                        tables = conn.execute(text("""
                             SELECT table_name 
-                            FROM all_tables 
+                            FROM dba_tables 
                             WHERE owner = :schema
                         """), {'schema': schema}).fetchall()
                         schemas[schema] = [t[0] for t in tables]
                     except Exception as e:
-                        current_app.logger.warning(f"Could not fetch tables for schema {schema}: {str(e)}")
+                        current_app.logger.warning(f"Tables fetch error for {schema}: {str(e)}")
                         schemas[schema] = []
                 return schemas
         except Exception as e:
-            current_app.logger.error(f"Oracle connection error: {str(e)}")
+            current_app.logger.error(f"Oracle error: {str(e)}")
             return {}
 
     @staticmethod

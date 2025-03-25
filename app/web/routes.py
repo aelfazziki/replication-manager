@@ -4,7 +4,7 @@ from app import db
 from app.forms import TaskForm, EndpointForm
 from threading import Thread
 import json
-import datetime
+from datetime import datetime,timezone
 #from app.replication_worker import run_replication  # Add this line
 
 bp = Blueprint('web', __name__, template_folder='templates')
@@ -96,7 +96,7 @@ def create_task():
                     'deletes': 0,
                     'bytes_processed': 0,
                     'latency': 0,
-                    'last_updated': datetime.utcnow().isoformat(),
+                    'last_updated': datetime.now(timezone.utc).isoformat(),
                     'last_position': 0
                 }
             )
@@ -283,11 +283,11 @@ def test_connection():
     from app.services.metadata_service import MetadataService
     form_data = request.form
     endpoint_type = form_data.get('type')
-
+    current_app.logger.info(f"Form data: {form_data}")
     try:
         # Create a dictionary of endpoint data
         endpoint_data = {
-            'type': form_data.get('type'),
+            'type': endpoint_type,
             'host': form_data.get('host'),
             'port': form_data.get('port'),
             'service_name': form_data.get('service_name'),
@@ -297,9 +297,58 @@ def test_connection():
             'credentials_json': form_data.get('credentials_json'),
             'database': form_data.get('database')
         }
+        # Base fields common to all types
+        endpoint_data = {
+            'type': endpoint_type,
+            'username': form_data.get('username'),
+            'password': form_data.get('password'),
+            'endpoint_type': form_data.get('endpoint_type'),
+            'target_schema': form_data.get('target_schema')
+        }
+
+        # Type-specific field mapping
+        type_mapping = {
+            'oracle': {
+                'host': 'oracle_host',
+                'port': 'oracle_port',
+                'service_name': 'oracle_service_name'
+            },
+            'postgres': {
+                'host': 'postgres_host',
+                'port': 'postgres_port',
+                'database': 'postgres_database'
+            },
+            'mysql': {
+                'host': 'mysql_host',  # Add these fields to your form if missing
+                'port': 'mysql_port',
+                'database': 'mysql_database'
+            },
+            'bigquery': {
+                'dataset': 'dataset',
+                'credentials_json': 'credentials_json'
+            }
+        }
+
+        # Add type-specific fields
+        if endpoint_type in type_mapping:
+            for key, form_field in type_mapping[endpoint_type].items():
+                endpoint_data[key] = form_data.get(form_field)
+
+        # Handle empty values for numeric fields
+        if endpoint_data.get('port'):
+            try:
+                endpoint_data['port'] = int(endpoint_data['port'])
+            except ValueError:
+                endpoint_data['port'] = None
+
+        # Now use endpoint_data for your database operations
+        print(endpoint_data)  # Debug output
+
+        current_app.logger.info(f"endpoint_data : {endpoint_data}")
 
         # Use the dictionary directly instead of a TempEndpoint object
         schemas = MetadataService.get_schemas(endpoint_data)
+        current_app.logger.info(f"schemas : {schemas}")
 
         if not schemas:
             return jsonify({'success': False, 'message': 'Connection successful but no schemas found'})
