@@ -1,49 +1,24 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // Run Button
-    document.querySelectorAll('.run-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const taskId = this.dataset.taskId;
-            const startDatetime = prompt("Enter start datetime (YYYY-MM-DD HH:MM:SS):");
-            if (startDatetime) {
-                fetch(`/task/${taskId}/run`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ start_datetime: startDatetime })
-                }).then(response => response.json())
-                  .then(data => {
-                      if (data.success) {
-                          alert("Task started successfully.");
-                      } else {
-                          alert("Failed to start task: " + data.message);
-                      }
-                  });
-            }
-        });
+     console.log('DOM fully loaded'); // Debugging
+    // Use event delegation for the "Stop" button
+    document.addEventListener('click', function(event) {
+        if (event.target.classList.contains('stop-task-btn')) {
+            const taskId = event.target.dataset.taskId;
+            confirmStopTask(taskId);
+        }
     });
+    // Wait for the task cards to be fully rendered
+    const taskMonitor = document.getElementById('task-monitor');
+    if (taskMonitor) {
+        const observer = new MutationObserver(() => {
+            // Initialize the script after the DOM is updated
+            initializeTaskControl();
+        });
 
-    // Reload Button
-    document.querySelectorAll('.reload-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const taskId = this.dataset.taskId;
-            if (confirm("Are you sure you want to reload this task?")) {
-                fetch(`/task/${taskId}/reload`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                }).then(response => response.json())
-                  .then(data => {
-                      if (data.success) {
-                          alert("Task reload started successfully.");
-                      } else {
-                          alert("Failed to reload task: " + data.message);
-                      }
-                  });
-            }
-        });
-    });
+        observer.observe(taskMonitor, { childList: true, subtree: true });
+    } else {
+        console.error('Task monitor element not found');
+    }
 });
 
 function initializeTaskControl() {
@@ -244,10 +219,4 @@ function confirmDeleteTask(taskId) {
         });
     }
 }
-function updateFormFields() {
-    const type = document.getElementById('type').value;
-    document.querySelectorAll('.database-fields').forEach(div => div.style.display = 'none');
-    document.getElementById(type + 'Fields').style.display = 'block';
-}
 setInterval(() => updateTaskMetrics(taskId), 5000);
-

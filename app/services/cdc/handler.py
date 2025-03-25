@@ -7,6 +7,7 @@ class CDCHandler:
         )
         
     def process_changes(self, changes):
+
         grouped_changes = self._group_changes_by_table(changes)
         
         for table, table_changes in grouped_changes.items():

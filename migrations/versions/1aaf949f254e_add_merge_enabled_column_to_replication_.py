@@ -1,8 +1,8 @@
-"""empty message
+"""Add merge_enabled column to replication_task table
 
-Revision ID: 051c0bf4ea09
+Revision ID: 1aaf949f254e
 Revises: 
-Create Date: 2025-03-05 00:23:44.278825
+Create Date: 2025-03-21 21:44:47.351621
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '051c0bf4ea09'
+revision = '1aaf949f254e'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -22,21 +22,23 @@ def upgrade():
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
     sa.Column('type', sa.String(length=20), nullable=False),
-    sa.Column('username', sa.String(length=50), nullable=True),
-    sa.Column('password', sa.String(length=100), nullable=True),
-    sa.Column('host', sa.String(length=120), nullable=True),
+    sa.Column('username', sa.String(length=100), nullable=False),
+    sa.Column('password', sa.String(length=100), nullable=False),
+    sa.Column('host', sa.String(length=100), nullable=True),
     sa.Column('port', sa.Integer(), nullable=True),
-    sa.Column('service_name', sa.String(length=50), nullable=True),
+    sa.Column('service_name', sa.String(length=100), nullable=True),
     sa.Column('dataset', sa.String(length=100), nullable=True),
     sa.Column('credentials_json', sa.Text(), nullable=True),
     sa.Column('database', sa.String(length=100), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('name')
+    sa.Column('target_schema', sa.String(length=100), nullable=True),
+    sa.Column('endpoint_type', sa.String(length=20), nullable=False),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_table('replication_task',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=120), nullable=False),
+    sa.Column('metrics', sa.JSON(), nullable=True),
     sa.Column('source_id', sa.Integer(), nullable=False),
     sa.Column('destination_id', sa.Integer(), nullable=False),
     sa.Column('tables', sa.JSON(), nullable=True),
@@ -46,6 +48,10 @@ def upgrade():
     sa.Column('options', sa.JSON(), nullable=True),
     sa.Column('last_position', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.Column('initial_load', sa.Boolean(), nullable=True),
+    sa.Column('create_tables', sa.Boolean(), nullable=True),
+    sa.Column('replication_mode', sa.String(length=20), nullable=True),
+    sa.Column('merge_enabled', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['destination_id'], ['endpoint.id'], ),
     sa.ForeignKeyConstraint(['source_id'], ['endpoint.id'], ),
     sa.PrimaryKeyConstraint('id'),

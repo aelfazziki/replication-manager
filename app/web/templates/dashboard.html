@@ -56,37 +56,28 @@
                     </small>
 
 <div class="btn-group">
-    <a href="{{ url_for('web.control_task', task_id=task.id, action='start') }}"
-       class="btn btn-sm btn-success {{ 'disabled' if task.status == 'running' }}">
-        Start
-    </a>
-    <button class="btn btn-sm btn-danger stop-task-btn"
-            data-task-id="{{ task.id }}"
-            {% if task.status != 'running' %}disabled{% endif %}>
+    <!-- Run Button -->
+    <button class="btn btn-sm btn-success run-btn" data-task-id="{{ task.id }}">
+        Run
+    </button>
+    <!-- Stop Button -->
+    <button class="btn btn-sm btn-danger stop-task-btn" data-task-id="{{ task.id }}" {% if task.status != 'running' %}disabled{% endif %}>
         Stop
     </button>
-    <button class="btn btn-sm btn-warning reload-btn"
-            data-task-id="{{ task.id }}"
-            {% if task.status =='running' %}disabled{% endif %}>
+    <!-- Reload Button -->
+    <button class="btn btn-sm btn-warning reload-btn" data-task-id="{{ task.id }}">
         Reload
     </button>
-    <button class="btn btn-sm btn-info resume-btn"
-            data-task-id="{{ task.id }}"
-            {% if not task.last_position %}disabled{% endif %}>
-        Resume
-    </button>
-    <a href="{{ url_for('web.edit_task', task_id=task.id) }}"
-       class="btn btn-sm btn-primary">
+    <!-- Edit Button -->
+    <a href="{{ url_for('web.edit_task', task_id=task.id) }}" class="btn btn-sm btn-primary">
         Edit
     </a>
-    <!-- Add the Delete button -->
-    <button class="btn btn-sm btn-danger delete-task-btn"
-        data-task-id="{{ task.id }}"
-        onclick="return confirm('Delete this task?')">
-    Delete
+    <!-- Delete Button -->
+    <button class="btn btn-sm btn-danger delete-task-btn" data-task-id="{{ task.id }}" onclick="return confirm('Delete this task?')">
+        Delete
     </button>
-
-</div>                </div>
+</div>
+                </div>
             </div>
         </div>
     </div>
@@ -123,6 +114,8 @@
                         <td>
                             {% if endpoint.type == 'oracle' %}
                                 {{ endpoint.host }}:{{ endpoint.port }} ({{ endpoint.service_name }})
+                            {% elif endpoint.type == 'postgres' %}
+                                {{ endpoint.host }}:{{ endpoint.port }} ({{ endpoint.database }})
                             {% elif endpoint.type == 'bigquery' %}
                                 Dataset: {{ endpoint.dataset }}
                             {% elif endpoint.type == 'mysql' %}

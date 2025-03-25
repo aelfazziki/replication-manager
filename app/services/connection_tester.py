@@ -8,13 +8,18 @@ from sqlalchemy import create_engine
 def test_database_connection(config):
     try:
         if config['type'] == 'oracle':
-            dsn = f"{config['host']}:{config['port']}/{config['service_name']}"
+            dsn = cx_Oracle.makedsn(
+                config['host'],
+                config['port'],
+                service_name=config['service_name']
+            )
             conn = cx_Oracle.connect(
                 user=config['username'],
                 password=config['password'],
                 dsn=dsn
             )
             conn.ping()
+            conn.close()
 
         elif config['type'] == 'bigquery':
             client = bigquery.Client.from_service_account_info(
@@ -30,6 +35,8 @@ def test_database_connection(config):
             with engine.connect() as conn:
                 conn.execute("SELECT 1")
 
-        return True, "Connexion réussie !"  # <-- Ajouter une espace après la virgule
+        return True, "Connection successful"
     except Exception as e:
-        return False, f"Échec de connexion : {str(e)}"
+        import traceback
+        traceback.print_exc()  # This will print the full traceback
+        return False, f"Connection failed: {str(e)}"

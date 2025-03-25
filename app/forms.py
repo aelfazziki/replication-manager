@@ -6,24 +6,66 @@ from wtforms import (
     PasswordField,
     TextAreaField,
     SubmitField,
-    BooleanField,SelectMultipleField
+    BooleanField,
+    SelectMultipleField
 )
-from wtforms.validators import DataRequired, Length
+from wtforms.validators import DataRequired, Length, Optional, NumberRange  # Added missing imports
 
 
 class EndpointForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
-    type = SelectField('Type', choices=[('oracle', 'Oracle'), ('mysql', 'MySQL'), ('bigquery', 'BigQuery')])
-    endpoint_type = SelectField('Endpoint Type', choices=[('source', 'Source'), ('target', 'Target')], default='source')
+    type = SelectField('Type', choices=[
+        ('oracle', 'Oracle'),
+        ('mysql', 'MySQL'),
+        ('bigquery', 'BigQuery'),
+        ('postgres', 'PostgreSQL')
+    ], validators=[DataRequired()])
+    endpoint_type = SelectField('Endpoint Type', choices=[
+        ('source', 'Source'),
+        ('target', 'Target')
+    ], validators=[DataRequired()])
     username = StringField('Username', validators=[DataRequired()])
-    password = PasswordField('Password', validators=[DataRequired()])
-    host = StringField('Host')  # For oracle/mysql
-    port = IntegerField('Port')  # For oracle/mysql
-    service_name = StringField('Service Name')  # For oracle
-    dataset = StringField('Dataset')  # For bigquery
-    credentials_json = TextAreaField('Credentials JSON')  # For bigquery
-    database = StringField('Database')  # For mysql
-    target_schema = StringField('Target Schema')  # New field for target schema
+    password = StringField('Password', validators=[DataRequired()])
+    target_schema = StringField('Target Schema')
+
+    # PostgreSQL-specific fields
+    postgres_host = StringField('PostgreSQL Host')
+    postgres_port = IntegerField('PostgreSQL Port', validators=[
+        Optional(),
+        NumberRange(min=1, max=65535)
+    ])
+    postgres_database = StringField('PostgreSQL Database')
+
+    # Oracle-specific fields
+    oracle_host = StringField('Oracle Host')
+    oracle_port = IntegerField('Oracle Port', validators=[
+        Optional(),
+        NumberRange(min=1, max=65535)
+    ])
+    oracle_service_name = StringField('Oracle Service Name')
+
+    # Other database type fields
+    dataset = StringField('BigQuery Dataset')
+    credentials_json = TextAreaField('BigQuery Credentials JSON')
+    database = StringField('MySQL Database')
+
+    def validate(self, extra_validators=None):
+        # First run default validation
+        if not super().validate():
+            return False
+
+        # Custom validation based on selected type
+        if self.type.data == 'oracle':
+            if not self.oracle_port.data:
+                self.oracle_port.errors.append('Port is required for Oracle')
+                return False
+        elif self.type.data == 'postgres':
+            if not self.postgres_port.data:
+                self.postgres_port.errors.append('Port is required for PostgreSQL')
+                return False
+
+        return True
+
 
 class TaskForm(FlaskForm):
     name = StringField('Name', validators=[

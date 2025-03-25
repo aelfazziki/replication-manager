@@ -29,3 +29,8 @@ class SecurityManager:
                 return conn.is_valid()
         except Exception:
             return False
+
+    def encrypt_credentials(self,config):
+        sensitive_fields = ['password', 'credentials_json']
+        return {k: self.cipher.encryptencrypt(v) if k in sensitive_fields else v
+                for k, v in config.items()}

@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import cx_Oracle
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from google.cloud import bigquery
@@ -160,6 +161,13 @@ class MetadataService:
                     FROM information_schema.tables 
                     WHERE table_schema = :schema AND table_name = :table
                 """), {'schema': schema_name, 'table': table_name})
+            elif conn.dialect.name == 'postgresql':
+                result = conn.execute(text(f"""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = :schema AND table_name = :table
+                """), {'schema': schema_name, 'table': table_name})
+                return result.fetchone() is not None
             else:
                 raise ValueError(f"Unsupported database type: {conn.dialect.name}")
 
@@ -242,17 +250,18 @@ class MetadataService:
     @staticmethod
     def _get_oracle_schemas(endpoint_data):
         try:
-            dsn = f"""
-            (DESCRIPTION=
-                (ADDRESS=(PROTOCOL=TCP)(HOST={endpoint_data['host']})(PORT={endpoint_data['port']}))
-                (CONNECT_DATA=(SERVICE_NAME={endpoint_data['service_name']}))
-            )"""
+            dsn = cx_Oracle.makedsn(
+                endpoint_data['host'],
+                endpoint_data['port'],
+                service_name=endpoint_data['service_name']
+            )
 
             engine = create_engine(
                 f"oracle+cx_oracle://{endpoint_data['username']}:{endpoint_data['password']}@",
-                connect_args={"dsn": dsn.strip().replace('\n', '')},
+                connect_args={"dsn": dsn},
                 max_identifier_length=128
             )
+
             with engine.connect() as conn:
                 schemas = {}
                 result = conn.execute(text("SELECT username FROM all_users ORDER BY username"))
@@ -265,11 +274,12 @@ class MetadataService:
                             WHERE owner = :schema
                         """), {'schema': schema}).fetchall()
                         schemas[schema] = [t[0] for t in tables]
-                    except:
+                    except Exception as e:
+                        current_app.logger.warning(f"Could not fetch tables for schema {schema}: {str(e)}")
                         schemas[schema] = []
                 return schemas
         except Exception as e:
-            current_app.logger.error(f"Oracle error: {str(e)}")
+            current_app.logger.error(f"Oracle connection error: {str(e)}")
             return {}
 
     @staticmethod
@@ -309,15 +319,15 @@ class MetadataService:
 
 def _get_connection_string(endpoint, schema_name):
     if endpoint.type == 'oracle':
-        # Use Easy Connect syntax: host:port/service_name
         return f"oracle+cx_oracle://{endpoint.username}:{endpoint.password}@{endpoint.host}:{endpoint.port}/?service_name={endpoint.service_name}"
     elif endpoint.type == 'mysql':
         return f"mysql+pymysql://{endpoint.username}:{endpoint.password}@{endpoint.host}:{endpoint.port}/{schema_name}"
     elif endpoint.type == 'bigquery':
         return f"bigquery://{schema_name}"
+    elif endpoint.type == 'postgres':
+        return f"postgresql+psycopg2://{endpoint.username}:{endpoint.password}@{endpoint.host}:{endpoint.port}/{endpoint.database}?options=-csearch_path%3D{schema_name}"
     else:
         raise ValueError(f"Unsupported database type: {endpoint.type}")
-
 
 def _add_metadata_columns(table_definition):
     """
@@ -612,3 +622,34 @@ def _get_all_columns(conn, schema_name, table_name):
     """)
     result = conn.execute(query, {'schema': schema_name.upper(), 'table': table_name.upper()})
     return [row[0].upper() for row in result]
+
+    @staticmethod
+    def _create_postgres_schema(endpoint, schema_name):
+        try:
+            engine = create_engine(
+                f"postgresql+psycopg2://{endpoint.username}:{endpoint.password}@{endpoint.host}:{endpoint.port}/{endpoint.database}"
+            )
+            with engine.connect() as conn:
+                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+                return True
+        except Exception as e:
+            current_app.logger.error(f"PostgreSQL schema creation error: {str(e)}")
+            return False
+
+    @staticmethod
+    def _get_postgres_schemas(endpoint):
+        try:
+            engine = create_engine(
+                f"postgresql+psycopg2://{endpoint.username}:{endpoint.password}@{endpoint.host}:{endpoint.port}/{endpoint.database}"
+            )
+            with engine.connect() as conn:
+                schemas = {}
+                result = conn.execute(text("SELECT schema_name FROM information_schema.schemata"))
+                for row in result:
+                    schema = row[0]
+                    tables = conn.execute(text(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{schema}'")).fetchall()
+                    schemas[schema] = [t[0] for t in tables]
+                return schemas
+        except Exception as e:
+            current_app.logger.error(f"PostgreSQL error: {str(e)}")
+            return {}

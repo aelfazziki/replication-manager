@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from google.cloud import bigquery
 import cx_Oracle
+from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 
@@ -44,9 +45,11 @@ class ReplicationEngine:
 
         source_conn.close()
 
+
     def _start_logminer_cdc(self):
         """Surveillance des changements en temps réel"""
         miner = OracleLogMiner(self.task.source.config)
+
         last_scn = self.task.last_position.get('scn')
 
         while self.task.status == 'running':
@@ -68,3 +71,8 @@ class ReplicationEngine:
         """Applique un changement à BigQuery"""
         # Implémentation spécifique au type d'opération
         pass
+    def _get_source_connection(self):
+        if self.task.source.type == 'postgres':
+            return create_engine(
+                f"postgresql+psycopg2://{self.task.source.username}:{self.task.source.password}@{self.task.source.host}:{self.task.source.port}/{self.task.source.database}"
+            ).connect()

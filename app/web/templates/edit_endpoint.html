@@ -4,10 +4,22 @@
     <h2>Edit Endpoint</h2>
     <form method="POST" id="endpoint-form">
         {{ form.hidden_tag() }}
-
-        <!-- Add hidden field for type since the visible one is disabled -->
-        <input type="hidden" name="type" value="{{ endpoint.type }}">
-
+<!-- Add this hidden field to include the endpoint type in the form submission -->
+<input type="hidden" name="type" value="{{ endpoint.type }}">
+        <!-- Add this near the top of the form -->
+{% if form.errors %}
+<div class="alert alert-danger">
+    <strong>Form errors:</strong>
+    <ul>
+        {% for field, errors in form.errors.items() %}
+            {% for error in errors %}
+                <li>{{ form[field].label }}: {{ error }}</li>
+            {% endfor %}
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+        <!-- Common Fields -->
         <div class="row mb-3">
             <div class="col-md-6">
                 {{ form.name.label(class="form-label") }}
@@ -31,48 +43,73 @@
             </div>
         </div>
 
-        <!-- Conditional Fields -->
-        {% if endpoint.type == 'oracle' %}
-        <div class="row mb-3">
-            <div class="col-md-4">
-                {{ form.host.label(class="form-label") }}
-                {{ form.host(class="form-control") }}
-            </div>
-            <div class="col-md-4">
-                {{ form.port.label(class="form-label") }}
-                {{ form.port(class="form-control") }}
-            </div>
-            <div class="col-md-4">
-                {{ form.service_name.label(class="form-label") }}
-                {{ form.service_name(class="form-control") }}
-            </div>
-        </div>
-        {% elif endpoint.type == 'bigquery' %}
-        <div class="row mb-3">
-            <div class="col-md-6">
-                {{ form.dataset.label(class="form-label") }}
-                {{ form.dataset(class="form-control") }}
-            </div>
-            <div class="col-md-6">
-                {{ form.credentials_json.label(class="form-label") }}
-                {{ form.credentials_json(class="form-control", rows=5) }}
+        <!-- Dynamic Fields -->
+        <!-- Oracle Fields -->
+        <div id="oracleFields" class="database-fields" style="{% if endpoint.type != 'oracle' %}display: none;{% endif %}">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    {{ form.oracle_host.label(class="form-label") }}
+                    {{ form.oracle_host(class="form-control") }}
+                </div>
+                <div class="col-md-4">
+                    {{ form.oracle_port.label(class="form-label") }}
+                    {{ form.oracle_port(class="form-control", type="number", min="1", max="65535") }}
+                </div>
+                <div class="col-md-4">
+                    {{ form.oracle_service_name.label(class="form-label") }}
+                    {{ form.oracle_service_name(class="form-control") }}
+                </div>
             </div>
         </div>
-        {% elif endpoint.type == 'mysql' %}
-        <div class="row mb-3">
-            <div class="col-md-12">
-                {{ form.database.label(class="form-label") }}
-                {{ form.database(class="form-control") }}
+
+        <!-- PostgreSQL Fields -->
+        <div id="postgresFields" class="database-fields" style="{% if endpoint.type != 'postgres' %}display: none;{% endif %}">
+            <div class="row mb-3">
+                <div class="col-md-4">
+                    {{ form.postgres_host.label(class="form-label") }}
+                    {{ form.postgres_host(class="form-control") }}
+                </div>
+                <div class="col-md-4">
+                    {{ form.postgres_port.label(class="form-label") }}
+                    {{ form.postgres_port(class="form-control", type="number", min="1", max="65535") }}
+                </div>
+                <div class="col-md-4">
+                    {{ form.postgres_database.label(class="form-label") }}
+                    {{ form.postgres_database(class="form-control") }}
+                </div>
             </div>
         </div>
-        {% endif %}
+
+        <!-- BigQuery Fields -->
+        <div id="bigqueryFields" class="database-fields" style="{% if endpoint.type != 'bigquery' %}display: none;{% endif %}">
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    {{ form.dataset.label(class="form-label") }}
+                    {{ form.dataset(class="form-control") }}
+                </div>
+                <div class="col-md-6">
+                    {{ form.credentials_json.label(class="form-label") }}
+                    {{ form.credentials_json(class="form-control", rows=5) }}
+                </div>
+            </div>
+        </div>
+
+        <!-- MySQL Fields -->
+        <div id="mysqlFields" class="database-fields" style="{% if endpoint.type != 'mysql' %}display: none;{% endif %}">
+            <div class="row mb-3">
+                <div class="col-md-12">
+                    {{ form.database.label(class="form-label") }}
+                    {{ form.database(class="form-control") }}
+                </div>
+            </div>
+        </div>
 
         <div class="form-group">
             {{ form.endpoint_type.label }}
             {{ form.endpoint_type(class="form-control", onchange="toggleTargetSchema()") }}
         </div>
 
-        <!-- Wrap target_schema in a container -->
+        <!-- Target Schema -->
         <div id="target-schema-group" class="form-group" style="display: none;">
             {{ form.target_schema.label }}
             {{ form.target_schema(class="form-control", placeholder="Enter target schema (for destination endpoints)") }}
@@ -82,20 +119,23 @@
             <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
                 <i class="bi bi-plug"></i> Test Connection
             </button>
-            <button type="submit" class="btn btn-primary">
-                Save Changes
-            </button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
             <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
         </div>
     </form>
 </div>
 
 <script>
+document.getElementById('endpoint-form').addEventListener('submit', function() {
+    // Enable all disabled fields before submission
+    this.querySelectorAll('input, select, textarea').forEach(field => {
+        field.disabled = false;
+    });
+});
 document.addEventListener('DOMContentLoaded', function() {
     const endpointTypeField = document.getElementById('endpoint_type');
     const targetSchemaGroup = document.getElementById('target-schema-group');
 
-    // Function to toggle target_schema visibility
     function toggleTargetSchema() {
         if (endpointTypeField.value === 'target') {
             targetSchemaGroup.style.display = 'block';
@@ -104,14 +144,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Add event listener for endpoint_type changes
     endpointTypeField.addEventListener('change', toggleTargetSchema);
-
-    // Initial check on page load
-    toggleTargetSchema();
+    toggleTargetSchema(); // Initialize on page load
 });
 
-// Function to test connection
 async function testConnection() {
     const form = document.getElementById('endpoint-form');
     const formData = new FormData(form);
@@ -122,7 +158,6 @@ async function testConnection() {
             body: formData
         });
         const result = await response.json();
-
         alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
     } catch (error) {
         alert('⚠️ Connection test error: ' + error.message);

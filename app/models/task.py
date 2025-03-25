@@ -20,6 +20,8 @@ class ReplicationTask(db.Model):
     initial_load = db.Column(db.Boolean, default=False)
     create_tables = db.Column(db.Boolean, default=True)
     replication_mode = db.Column(db.String(20), default='full')  # full/partial
+    merge_enabled = db.Column(db.Boolean, default=True)
+
     metrics = db.Column(db.JSON, default={  # Initialize metrics with default values
         'inserts': 0,
         'updates': 0,

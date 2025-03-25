@@ -4,6 +4,7 @@ from app import db
 from app.forms import TaskForm, EndpointForm
 from threading import Thread
 import json
+import datetime
 #from app.replication_worker import run_replication  # Add this line
 
 bp = Blueprint('web', __name__, template_folder='templates')
@@ -22,33 +23,50 @@ def dashboard():
                            tasks=tasks,
                            endpoints=endpoints)
 
+
 @bp.route('/endpoint/create', methods=['GET', 'POST'])
 def create_endpoint():
     form = EndpointForm()
+    current_app.logger.info(f"Before Form data validation: {form.data}")
     if form.validate_on_submit():
         try:
+            # Log form data for debugging
+            current_app.logger.info(f"Form data received: {form.data}")
+            db_type = form.type.data
+            host = form.postgres_host.data if db_type == 'postgres' else form.oracle_host.data
+            port = form.postgres_port.data if db_type == 'postgres' else form.oracle_port.data
+            database = form.postgres_database.data if db_type == 'postgres' else None
+            service_name = form.oracle_service_name.data if db_type == 'oracle' else None
+
             new_endpoint = Endpoint(
                 name=form.name.data,
-                type=form.type.data,
+                type=db_type,
                 endpoint_type=form.endpoint_type.data,
                 username=form.username.data,
                 password=form.password.data,
-                host=form.host.data if form.type.data in ['oracle', 'mysql'] else None,
-                port=form.port.data if form.type.data in ['oracle', 'mysql'] else None,
-                service_name=form.service_name.data if form.type.data == 'oracle' else None,
+                host=host,
+                port=port,
+                service_name=service_name,
                 dataset=form.dataset.data if form.type.data == 'bigquery' else None,
                 credentials_json=form.credentials_json.data if form.type.data == 'bigquery' else None,
-                database=form.database.data if form.type.data == 'mysql' else None,
+                database=database,
                 target_schema=form.target_schema.data if form.endpoint_type.data == 'target' else None
             )
             db.session.add(new_endpoint)
+            current_app.logger.info("Endpoint added to session. Attempting to commit...")
             db.session.commit()
+            current_app.logger.info("Endpoint successfully committed to the database.")
             flash('Endpoint created successfully', 'success')
             return redirect(url_for('web.dashboard'))
         except Exception as e:
             db.session.rollback()
             flash(f'Error creating endpoint: {str(e)}', 'danger')
-    return render_template('create_endpoint.html', form=form)
+            current_app.logger.error(f"Error creating endpoint: {str(e)}", exc_info=True)
+    else:
+        # Log form validation errors
+        current_app.logger.info(f"Form validation errors: {form.data}")
+        current_app.logger.error(f"Form validation errors: {form.errors}")
+        return render_template('create_endpoint.html', form=form)
 
 @bp.route('/task/create', methods=['GET', 'POST'])
 def create_task():
@@ -162,29 +180,6 @@ def delete_task(task_id):
 # Remove the top-level import
 # from app.replication_worker import run_replication
 
-@bp.route('/task/control/<int:task_id>/<action>')
-def control_task(task_id, action):
-    from app.replication_worker import run_replication
-    from threading import Thread
-
-    task = ReplicationTask.query.get_or_404(task_id)
-    if action == 'start':
-        task.status = 'running'
-        Thread(target=run_replication, args=(task.id, True, False)).start()  # Initial load
-        flash('Task started successfully', 'success')
-    elif action == 'reload':
-        task.status = 'running'
-        Thread(target=run_replication, args=(task.id, False, True)).start()  # Full reload
-        flash('Task reload started successfully', 'success')
-    elif action == 'resume':
-        task.status = 'running'
-        Thread(target=run_replication, args=(task.id, False, False)).start()  # Resume from last position
-        flash('Task resumed successfully', 'success')
-    elif action == 'stop':
-        task.status = 'stopped'
-        flash('Task stopped successfully', 'info')
-    db.session.commit()
-    return redirect(url_for('web.dashboard'))
 
 # Endpoint deletion
 @bp.route('/endpoint/delete/<int:endpoint_id>')
@@ -202,19 +197,51 @@ def edit_endpoint(endpoint_id):
     endpoint = Endpoint.query.get_or_404(endpoint_id)
     form = EndpointForm(obj=endpoint)
 
+    # Manually set the type since the field is disabled
+    form.type.data = endpoint.type
+
+    if request.method == 'GET':
+        # Pre-populate type-specific fields
+        if endpoint.type == 'postgres':
+            form.postgres_host.data = endpoint.host
+            form.postgres_port.data = endpoint.port
+            form.postgres_database.data = endpoint.database
+        elif endpoint.type == 'oracle':
+            form.oracle_host.data = endpoint.host
+            form.oracle_port.data = endpoint.port
+            form.oracle_service_name.data = endpoint.service_name
+
     if form.validate_on_submit():
         try:
-            form.populate_obj(endpoint)
+            # Update common fields
+            endpoint.name = form.name.data
+            endpoint.endpoint_type = form.endpoint_type.data
+            endpoint.username = form.username.data
+            endpoint.password = form.password.data
+            endpoint.target_schema = form.target_schema.data
+
+            # Update type-specific fields
+            if endpoint.type == 'postgres':
+                endpoint.host = form.postgres_host.data
+                endpoint.port = form.postgres_port.data
+                endpoint.database = form.postgres_database.data
+                endpoint.service_name = None
+            elif endpoint.type == 'oracle':
+                endpoint.host = form.oracle_host.data
+                endpoint.port = form.oracle_port.data
+                endpoint.service_name = form.oracle_service_name.data
+                endpoint.database = None
+
             db.session.commit()
             flash('Endpoint updated successfully', 'success')
             return redirect(url_for('web.dashboard'))
+
         except Exception as e:
             db.session.rollback()
-            flash(f'Update error: {str(e)}', 'danger')
+            flash(f'Error updating endpoint: {str(e)}', 'danger')
+            current_app.logger.error(f"Endpoint update error: {str(e)}", exc_info=True)
 
     return render_template('edit_endpoint.html', form=form, endpoint=endpoint)
-
-
 
 @bp.route('/api/source/<int:endpoint_id>/tables')
 def get_source_tables(endpoint_id):
@@ -306,30 +333,40 @@ def get_metrics(task_id):
         'metrics': task.metrics or {}
     })\
 
+
+@bp.route('/task/<int:task_id>/run', methods=['POST'])
+def run_task(task_id):
+    from app.replication_worker import run_replication
+    from threading import Thread
+
+    task = ReplicationTask.query.get_or_404(task_id)
+    start_datetime = request.json.get('start_datetime')
+    Thread(target=run_replication, args=(task.id, False, False, start_datetime)).start()
+    return jsonify({"success": True, "message": "Task started successfully."}), 200
+
+@bp.route('/task/<int:task_id>/resume', methods=['POST'])
+def resume_task(task_id):
+    from app.replication_worker import run_replication
+    from threading import Thread
+
+    task = ReplicationTask.query.get_or_404(task_id)
+    Thread(target=run_replication, args=(task.id, False, False)).start()
+    return jsonify({"success": True, "message": "Task resumed successfully."}), 200
+
 @bp.route('/task/<int:task_id>/reload', methods=['POST'])
 def reload_task(task_id):
     from app.replication_worker import run_replication
     from threading import Thread
 
     task = ReplicationTask.query.get_or_404(task_id)
-    if task:
-        task.status = 'running'
-        task.last_position = None  # Reset last position for full reload
-        db.session.commit()
-        Thread(target=run_replication, args=(task.id, True, False)).start()
-        return jsonify({"success": True, "status": "reloading"}), 200
-    else:
-        return jsonify({"success": False, "message": "Task not found"}), 404
+    Thread(target=run_replication, args=(task.id, True, True)).start()
+    return jsonify({"success": True, "message": "Task reload started successfully."}), 200
 
-@bp.route('/task/<int:task_id>/resume', methods=['POST'])
-def resume_task(task_id):
-    from app.replication_worker import run_replication
-    from threading import Thread
+@bp.route('/task/control/<int:task_id>/<action>')
+def control_task(task_id, action):
     task = ReplicationTask.query.get_or_404(task_id)
-    if task and task.last_position:
-        task.status = 'running'
+    if action == 'stop':
+        task.status = 'stopped'
         db.session.commit()
-        Thread(target=run_replication, args=(task.id, False, True)).start()
-        return jsonify({"success": True, "status": "resuming"}), 200
-    else:
-        return jsonify({"success": False, "message": "Task not found or no last position"}), 404
+        flash('Task stopped successfully', 'info')
+    return redirect(url_for('web.dashboard'))

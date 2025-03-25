@@ -1,16 +1,20 @@
 from google.cloud import bigquery
 
 class OracleToBigQueryConverter:
-    """Converts Oracle schema to BigQuery schema."""
     TYPE_MAP = {
         'VARCHAR2': 'STRING',
         'CHAR': 'STRING',
         'NUMBER': 'NUMERIC',
         'DATE': 'TIMESTAMP',
         'CLOB': 'STRING',
-        'BLOB': 'BYTES'
+        'BLOB': 'BYTES',
+        'TEXT': 'STRING',  # PostgreSQL specific
+        'INTEGER': 'INT64',  # PostgreSQL specific
+        'BIGINT': 'INT64',  # PostgreSQL specific
+        'FLOAT': 'FLOAT64',  # PostgreSQL specific
+        'DOUBLE': 'FLOAT64',  # PostgreSQL specific
+        'BOOLEAN': 'BOOL',  # PostgreSQL specific
     }
-    
     def convert_table(self, oracle_ddl):
         """Convert Oracle DDL to BigQuery schema."""
         # Parse Oracle DDL
