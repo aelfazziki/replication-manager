@@ -355,27 +355,23 @@ def _parse_columns_and_values(sql):
 
 
 def _build_where_clause_from_primary_keys(primary_key_columns, sql):
-    """
-    Build a WHERE clause using the primary key columns and values from the SQL statement.
-    """
+    """Extract only primary key conditions from DELETE statement"""
     try:
-        if "where" in sql.lower():
-            where_clause = sql.lower().split("where")[1].strip().replace(";", "")
-            # Extract conditions related to primary keys
-            conditions = []
-            for col in primary_key_columns:
-                if col.lower() in where_clause:
-                    # Extract the value after the column name
-                    value_part = where_clause.split(col.lower())[1].strip()
-                    if value_part.startswith("="):
-                        value = value_part.split("=")[1].split()[0].strip()
-                        conditions.append(f"{col} = {value}")
-            if conditions:
-                return " AND ".join(conditions)
-        raise ValueError(f"Unable to build WHERE clause from primary keys for SQL: {sql}")
+        where_part = sql.lower().split("where")[1].strip().replace(";", "")
+        conditions = []
+
+        for col in primary_key_columns:
+            col_lower = col.lower()
+            if f"{col_lower} =" in where_part:
+                # Extract the condition using case-sensitive original column name
+                start = where_part.find(col_lower)
+                end = where_part.find(" and ", start) if " and " in where_part[start:] else None
+                condition = where_part[start:end].strip()
+                conditions.append(f"{col} {condition.split('=', 1)[1].strip()}")
+
+        return " AND ".join(conditions)
     except Exception as e:
         raise ValueError(f"Failed to build WHERE clause: {str(e)}")
-
 
 def apply_changes_to_target(changes, target_endpoint, target_schema, task, app):
     try:
@@ -411,43 +407,80 @@ def apply_changes_to_target(changes, target_endpoint, target_schema, task, app):
 
                         if operation == "insert":
                             columns, values = _parse_columns_and_values(sql)
-                            if hasattr(task, "merge_enabled") and task.merge_enabled:
-                                # Build the ON clause dynamically using primary key columns
-                                on_clause = " AND ".join([f"tgt.{col} = src.{col}" for col in primary_key_columns])
 
-                                # Build the MERGE statement dynamically
+                            # FIX 1: Clean up values formatting
+                            # Remove surrounding parentheses and split values
+                            clean_values = values.strip()[1:-1]  # Remove ()
+                            individual_values = [v.strip() for v in clean_values.split(",")]
+
+                            # FIX 2: Create proper column-value pairs
+                            value_assignments = ", ".join([
+                                f"{val} AS {col.strip()}"
+                                for col, val in zip(columns.split(","), individual_values)
+                            ])
+
+                            if hasattr(task, "merge_enabled") and task.merge_enabled:
+                                # Exclude primary keys from update
+                                all_columns = [col.strip() for col in columns.split(",")]
+                                primary_key_columns_upper = []
+                                all_columns_upper = []
+
+                                for s in all_columns:
+                                    all_columns_upper.append(s.upper())
+
+                                for s in primary_key_columns:
+                                    primary_key_columns_upper.append(s.upper())
+
+                                non_pk_columns = [col for col in all_columns_upper if col not in primary_key_columns_upper]
+                                app.logger.info(f"primary_key_columns : {primary_key_columns_upper}")
+                                app.logger.info(f"non_pk_columns : {non_pk_columns}")
+                                on_clause = " AND ".join([f"tgt.{col} = src.{col}" for col in primary_key_columns])
+                                update_set = ", ".join([f"tgt.{col} = src.{col}" for col in non_pk_columns])
+                                app.logger.info(f"update_set : {update_set}")
+
                                 merge_sql = f"""
-                                MERGE INTO {target_schema}.{table_name} tgt
-                                USING (SELECT {values} AS {columns.replace(",", ", ")} FROM dual) src
-                                ON ({on_clause}) -- Dynamic ON clause using primary keys
-                                WHEN MATCHED THEN
-                                  UPDATE SET {", ".join([f"tgt.{col.strip()} = src.{col.strip()}" for col in columns.split(",")])},
-                                             tgt.meta_update_timestamp = SYSTIMESTAMP
-                                WHEN NOT MATCHED THEN
-                                  INSERT ({columns}, meta_create_timestamp, meta_update_timestamp)
-                                  VALUES ({values}, SYSTIMESTAMP, SYSTIMESTAMP);
-                                """
+                                    MERGE INTO {target_schema}.{table_name} tgt
+                                USING (
+                                    SELECT {','.join([
+                                        f"{v} AS {c}" 
+                                        for c, v in zip(columns.split(","), individual_values)
+                                    ])} 
+                                    FROM dual
+                                ) src
+                                ON ({on_clause})
+                                    WHEN MATCHED THEN
+                                      UPDATE SET {update_set},
+                                                 tgt.meta_update_timestamp = SYSTIMESTAMP
+                                    WHEN NOT MATCHED THEN
+                                      INSERT ({columns}, meta_create_timestamp, meta_update_timestamp)
+                                      VALUES ({clean_values}, SYSTIMESTAMP, SYSTIMESTAMP)
+                                    """
                                 app.logger.info(f"Executing MERGE: {merge_sql}")
                                 conn.execute(text(merge_sql))
                             else:
                                 # Build the INSERT statement for the target table
                                 insert_sql = f"""
                                 INSERT INTO {target_schema}.{table_name} ({columns})
-                                VALUES ({values});
+                                VALUES ({clean_values});
                                 """
                                 app.logger.info(f"Executing INSERT: {insert_sql}")
                                 conn.execute(text(insert_sql))
+
                         elif operation == "delete":
-                            # Build the WHERE clause using primary keys
-                            where_clause = _build_where_clause_from_primary_keys(primary_key_columns, sql)
+                            # Existing delete logic remains the same
+                            where_clause = _build_where_clause_from_primary_keys(
+                                primary_key_cache.get(table_name, []),
+                                sql
+                            )
                             delete_sql = f"""
                             DELETE FROM {target_schema}.{table_name}
                             WHERE {where_clause};
                             """
                             app.logger.info(f"Executing DELETE: {delete_sql}")
                             conn.execute(text(delete_sql))
+
                         elif operation == "update":
-                            # Build the SET and WHERE clauses
+                            # Existing update logic remains the same
                             set_clause = sql.split("set")[1].split("where")[0].strip()
                             where_clause = _build_where_clause_from_primary_keys(primary_key_columns, sql)
                             update_sql = f"""
