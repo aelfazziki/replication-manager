@@ -1,10 +1,21 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify,current_app
-from app.models import Endpoint, ReplicationTask
-from app import db
-from app.forms import TaskForm, EndpointForm
-from threading import Thread
-import json
-from datetime import datetime,timezone
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
+from app.models import Endpoint, ReplicationTask # Assuming models are in app.models
+from app import db # Assuming db instance is created in app package
+from app.forms import TaskForm, EndpointForm # Assuming forms are in app.forms
+from datetime import datetime, timezone
+import json # Added missing import
+# --- Import the Celery task ---
+# Adjust the import path based on where your Celery task is defined
+from app.replication_worker import run_replication, build_connector_config, get_source_connector  # Or maybe tasks.py
+def run_replication(*args, **kwargs):
+            # Dummy task function
+            class DummyAsyncResult:
+                id = "DUMMY_TASK_ID_IMPORT_FAILED"
+                def delay(*args, **kwargs):
+                    print("ERROR: run_replication task not imported correctly.")
+                    return DummyAsyncResult()
+            return DummyAsyncResult()
+
 #from app.replication_worker import run_replication  # Add this line
 
 bp = Blueprint('web', __name__, template_folder='templates')
@@ -277,6 +288,103 @@ def get_source_schemas(endpoint_id):
     except Exception as e:
         current_app.logger.error(f"Schema fetch error: {str(e)}")
         return jsonify({'error': str(e)}), 500
+# --- Task Control Routes (Updated for Celery) ---
+
+@bp.route('/task/<int:task_id>/run', methods=['POST'])
+def run_task_api(task_id): # Changed function name slightly
+    task = db.session.get(ReplicationTask, task_id)
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
+
+    # Optional: Add logic to prevent starting if already running/queued
+    # if task.status == 'running' or task is already queued:
+    #     return jsonify({"success": False, "message": "Task is already running or queued."}), 409
+
+    # Get start_datetime from request if provided (used by your JS)
+    start_datetime_str = request.json.get('start_datetime')
+    # Note: The Celery task 'run_replication' needs to handle this parameter if used.
+    # The current 'run_replication' signature doesn't use start_datetime. Modify if needed.
+
+    try:
+        # Enqueue the task using Celery's delay() method
+        # Pass necessary arguments defined in the task function signature
+        async_result = run_replication.delay(task.id, perform_initial_load_override=False)
+        current_app.logger.info(f"Task {task.id} queued for execution. Celery task ID: {async_result.id}")
+
+        # Optionally update task status to 'queued' or similar
+        task.status = 'queued' # Or keep as 'stopped' until worker picks it up
+        db.session.commit()
+
+        return jsonify({"success": True, "message": f"Task {task.id} queued successfully.", "celery_task_id": async_result.id}), 202 # 202 Accepted
+    except Exception as e:
+        current_app.logger.error(f"Failed to enqueue task {task.id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Failed to queue task."}), 500
+
+
+@bp.route('/task/<int:task_id>/reload', methods=['POST'])
+def reload_task_api(task_id): # Changed function name slightly
+    task = db.session.get(ReplicationTask, task_id)
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
+
+    try:
+        # Enqueue the task with initial load override set to True
+        async_result = run_replication.delay(task.id, perform_initial_load_override=True)
+        current_app.logger.info(f"Task {task.id} queued for reload. Celery task ID: {async_result.id}")
+
+        task.status = 'queued' # Or keep as 'stopped'
+        db.session.commit()
+
+        return jsonify({"success": True, "message": f"Task {task.id} reload queued successfully.", "celery_task_id": async_result.id}), 202 # 202 Accepted
+    except Exception as e:
+        current_app.logger.error(f"Failed to enqueue task {task.id} for reload: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Failed to queue task reload."}), 500
+
+
+# --- Placeholder for Stopping a Task (Requires Celery Control/Revoke API) ---
+@bp.route('/task/<int:task_id>/stop', methods=['POST'])
+def stop_task_api(task_id):
+    task = db.session.get(ReplicationTask, task_id)
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
+
+    # Implementation requires interacting with Celery:
+    # 1. Find the Celery task ID associated with the running task (needs to be stored).
+    # 2. Use `celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')`.
+    # 3. Update the task status in your database (`task.status = 'stopped'`).
+    # This needs more complex state management.
+
+    # Simple approach: Just update DB status, Celery task needs to check this status periodically.
+    if task.status == 'running' or task.status == 'queued':
+         task.status = 'stopping' # Signal the worker to stop
+         db.session.commit()
+         current_app.logger.info(f"Attempting to signal task {task.id} to stop.")
+         return jsonify({"success": True, "message": "Task stop signal sent. Worker will stop on next check."}), 200
+    else:
+         return jsonify({"success": False, "message": f"Task status is '{task.status}', cannot stop."}), 400
+
+# --- Placeholder for Task Status API (Requires Celery Result Backend) ---
+@bp.route('/task/<int:task_id>/status', methods=['GET'])
+def get_task_status_api(task_id):
+    task = db.session.get(ReplicationTask, task_id)
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
+
+    # Implementation requires:
+    # 1. Storing the Celery task ID when the task is started.
+    # 2. Using `run_replication.AsyncResult(celery_task_id)` to get status from Celery backend.
+    # 3. Combining Celery status with your application's DB status (`task.status`).
+
+    # Simple approach: Just return DB status
+    return jsonify({
+        "success": True,
+        "task_id": task.id,
+        "status": task.status, # Status from your application DB
+        "last_updated": task.last_updated.isoformat() if task.last_updated else None,
+        "last_position": task.last_position
+        # Add metrics here too if needed
+    }), 200
+
 
 @bp.route('/endpoint/test_connection', methods=['POST'])
 def test_connection():
@@ -383,15 +491,15 @@ def get_metrics(task_id):
     })\
 
 
-@bp.route('/task/<int:task_id>/run', methods=['POST'])
-def run_task(task_id):
-    from app.replication_worker import run_replication
-    from threading import Thread
-
-    task = ReplicationTask.query.get_or_404(task_id)
-    start_datetime = request.json.get('start_datetime')
-    Thread(target=run_replication, args=(task.id, False, False, start_datetime)).start()
-    return jsonify({"success": True, "message": "Task started successfully."}), 200
+#@bp.route('/task/<int:task_id>/run', methods=['POST'])
+#def run_task(task_id):
+#    from app.replication_worker import run_replication
+#    from threading import Thread
+#
+#    task = ReplicationTask.query.get_or_404(task_id)
+#    start_datetime = request.json.get('start_datetime')
+#    Thread(target=run_replication, args=(task.id, False, False, start_datetime)).start()
+#    return jsonify({"success": True, "message": "Task started successfully."}), 200
 
 @bp.route('/task/<int:task_id>/resume', methods=['POST'])
 def resume_task(task_id):
@@ -402,14 +510,63 @@ def resume_task(task_id):
     Thread(target=run_replication, args=(task.id, False, False)).start()
     return jsonify({"success": True, "message": "Task resumed successfully."}), 200
 
-@bp.route('/task/<int:task_id>/reload', methods=['POST'])
-def reload_task(task_id):
-    from app.replication_worker import run_replication
-    from threading import Thread
+#@bp.route('/task/<int:task_id>/reload', methods=['POST'])
+#def reload_task(task_id):
+#    from app.replication_worker import run_replication
+#    from threading import Thread
+#
+#    task = ReplicationTask.query.get_or_404(task_id)
+#    Thread(target=run_replication, args=(task.id, True, True)).start()
+#    return jsonify({"success": True, "message": "Task reload started successfully."}), 200
 
+@bp.route('/task/<int:task_id>/run', methods=['POST'])
+def run_task_endpoint(task_id): # Renamed endpoint function for clarity
     task = ReplicationTask.query.get_or_404(task_id)
-    Thread(target=run_replication, args=(task.id, True, True)).start()
-    return jsonify({"success": True, "message": "Task reload started successfully."}), 200
+    # Optional: Get parameters if needed by the task
+    # start_datetime = request.json.get('start_datetime')
+
+    # Enqueue the task
+    run_replication.delay(task.id) # Pass necessary arguments
+
+    return jsonify({"success": True, "message": f"Task {task.id} queued for execution."}), 202 # 202 Accepted
+
+@bp.route('/task/<int:task_id>/reload', methods=['POST'])
+def reload_task_endpoint(task_id):
+    task = ReplicationTask.query.get_or_404(task_id)
+    # Enqueue the task with initial load override
+    run_replication.delay(task.id, perform_initial_load_override=True)
+    return jsonify({"success": True, "message": f"Task {task.id} reload queued."}), 202
+
+
+# --- API endpoint to fetch schemas/tables ---
+# (Keep or modify based on task-builder.js needs)
+@bp.route('/api/endpoints/<int:endpoint_id>/tables', methods=['GET'])
+def get_endpoint_tables(endpoint_id):
+    endpoint = db.session.get(Endpoint, endpoint_id)
+    if not endpoint or endpoint.endpoint_type != 'source':
+        return jsonify({"error": "Source endpoint not found"}), 404
+
+    connector = None
+    try:
+        config = build_connector_config(endpoint)
+        connector = get_source_connector(endpoint) # Use factory
+        connector.connect(config)
+        schemas_and_tables = connector.get_schemas_and_tables()
+        # Format for UI (example: list of {'schema': s, 'table': t})
+        formatted_tables = []
+        for schema, tables in schemas_and_tables.items():
+            for table in tables:
+                formatted_tables.append({'schema': schema, 'table': table})
+        return jsonify(formatted_tables)
+    except Exception as e:
+        current_app.logger.error(f"Error fetching tables for endpoint {endpoint_id}: {e}", exc_info=True)
+        return jsonify({"error": f"Failed to fetch tables: {e}"}), 500
+    finally:
+        if connector:
+            try:
+                connector.disconnect()
+            except Exception as e:
+                 current_app.logger.error(f"Error disconnecting after fetching tables: {e}", exc_info=True)
 
 @bp.route('/task/control/<int:task_id>/<action>')
 def control_task(task_id, action):
