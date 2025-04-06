@@ -1,12 +1,15 @@
 # app/web/routes.py (Final Version & Cleaned)
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, abort
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.models import Endpoint, ReplicationTask
 from app import db
 from app.forms import TaskForm, EndpointForm
 from datetime import datetime, timezone # Import timezone for create_task default metrics
 import json
 from celery.result import AsyncResult
+from redis import Redis # Assuming Redis is used for backend / can be used for signaling
 
 # --- Import the REAL Celery task ---
 from app.tasks import run_replication
@@ -432,39 +435,50 @@ def reload_task(task_id): # Changed function name
         return jsonify({"success": False, "message": "Failed to queue task reload."}), 500
 
 @bp.route('/task/<int:task_id>/stop', methods=['POST'])
-# routes.py - Updated stop_task_api function
-
-@bp.route('/task/<int:task_id>/stop', methods=['POST'])
-def stop_task_api(task_id): # Renamed function
+def stop_task_api(task_id):
     task = db.session.get(ReplicationTask, task_id)
-    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
 
-    if task.status == 'running' or task.status == 'queued':
-         task.status = 'stopping'
-         # --- Get Celery Task ID ---
-         # Use getattr for safety in case field was somehow missed, though migrate should ensure it exists
-         celery_task_id = getattr(task, 'celery_task_id', None) # UNCOMMENTED assignment
-         db.session.commit() # Commit status change first
-         current_app.logger.info(f"Signalled task {task.id} to stop by setting status to 'stopping'.")
+    if task.status not in ['running', 'pending']: # Only stop tasks that are active
+         return jsonify({"success": False, "message": f"Task is already in '{task.status}' state."}), 400
 
-         # --- Add Celery Revoke Logic ---
-         if celery_task_id: # UNCOMMENTED Check
-             try:
-                 # celery_app should already be imported at the top
-                 # Send terminate signal to worker process
-                 current_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM') # UNCOMMENTED Revoke
-                 current_app.logger.info(f"Sent revoke/terminate signal to Celery task {celery_task_id} for task {task.id}.") # UNCOMMENTED Log
-             except Exception as revoke_e:
-                 current_app.logger.error(f"Failed to send revoke signal to Celery task {celery_task_id}: {revoke_e}") # UNCOMMENTED Error Log
-         else:
-              current_app.logger.warning(f"Cannot send revoke signal for task {task.id}: Celery Task ID not found/stored in DB.") # UNCOMMENTED Warning
-         # --- End Revoke Logic ---
+    try:
+        # 1. Update DB status to 'stopping' immediately
+        task.status = 'stopping'
+        task.last_updated = datetime.now(timezone.utc) # Use timezone aware
+        db.session.commit()
+        current_app.logger.info(f"Set task {task_id} status to 'stopping' in database.")
 
-         return jsonify({"success": True, "message": "Task stop requested."}), 200
-    elif task.status == 'stopping':
-         return jsonify({"success": True, "message": "Task is already stopping."}), 200
-    else:
-         return jsonify({"success": False, "message": f"Task status is '{task.status}', cannot stop."}), 400
+        # 2. Signal the Celery task via Redis flag (preferred)
+        celery_task_id = task.celery_task_id
+        if celery_task_id:
+            try:
+                # Use a simple Redis key; the task checks for its existence
+                redis_client = Redis.from_url(current_app.config['CELERY_RESULT_BACKEND']) # Connect to Redis
+                stop_key = f"stop_request:{celery_task_id}"
+                redis_client.set(stop_key, "1", ex=3600) # Set flag with 1-hour expiry
+                current_app.logger.info(f"Sent stop signal via Redis key '{stop_key}' for Celery task {celery_task_id}.")
+
+                # Optional/Fallback: Attempt Celery revoke (can be abrupt)
+                # result = AsyncResult(celery_task_id, app=current_app)
+                # result.revoke(terminate=True, signal='SIGTERM') # Use terminate=True carefully
+                # current_app.logger.info(f"Attempted to revoke Celery task {celery_task_id}.")
+
+            except Exception as e:
+                 current_app.logger.error(f"Failed to send stop signal/revoke Celery task {celery_task_id}: {e}", exc_info=True)
+                 # Don't fail the whole request, DB status is already 'stopping'
+
+        flash(f"Stop request sent for task '{task.name}'.", "info")
+        return jsonify({"success": True, "message": "Stop request sent."})
+
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        current_app.logger.error(f"Database error stopping task {task_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Database error processing stop request."}), 500
+    except Exception as e:
+        current_app.logger.error(f"Unexpected error stopping task {task_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Unexpected error processing stop request."}), 500
 
 
 @bp.route('/task/<int:task_id>/status', methods=['GET'])
