@@ -1,218 +1,93 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app
-from app.models import Endpoint, ReplicationTask # Assuming models are in app.models
-from app import db # Assuming db instance is created in app package
-from app.forms import TaskForm, EndpointForm # Assuming forms are in app.forms
-from datetime import datetime, timezone
-import json # Added missing import
-# --- Import the Celery task ---
-# Adjust the import path based on where your Celery task is defined
-from app.replication_worker import run_replication, build_connector_config, get_source_connector  # Or maybe tasks.py
-def run_replication(*args, **kwargs):
-            # Dummy task function
-            class DummyAsyncResult:
-                id = "DUMMY_TASK_ID_IMPORT_FAILED"
-                def delay(*args, **kwargs):
-                    print("ERROR: run_replication task not imported correctly.")
-                    return DummyAsyncResult()
-            return DummyAsyncResult()
+# app/web/routes.py (Final Version & Cleaned)
 
-#from app.replication_worker import run_replication  # Add this line
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, abort
+from app.models import Endpoint, ReplicationTask
+from app import db
+from app.forms import TaskForm, EndpointForm
+from datetime import datetime, timezone # Import timezone for create_task default metrics
+import json
+from celery.result import AsyncResult
+
+# --- Import the REAL Celery task ---
+from app.tasks import run_replication
+
+# --- Import helpers needed by API routes ---
+from app.replication_worker import build_connector_config, get_source_connector
 
 bp = Blueprint('web', __name__, template_folder='templates')
 
-
+# --- Dashboard ---
 @bp.route('/')
 def dashboard():
-    page = request.args.get('page', 1, type=int)
-    per_page = 10
-
-    # Add explicit ordering and remove pagination for testing
     tasks = ReplicationTask.query.order_by(ReplicationTask.created_at.desc()).all()
     endpoints = Endpoint.query.order_by(Endpoint.created_at.desc()).all()
+    return render_template('dashboard.html', tasks=tasks, endpoints=endpoints)
 
-    return render_template('dashboard.html',
-                           tasks=tasks,
-                           endpoints=endpoints)
-
-
+# --- Endpoint CRUD ---
 @bp.route('/endpoint/create', methods=['GET', 'POST'])
 def create_endpoint():
     form = EndpointForm()
-    current_app.logger.info(f"Before Form data validation: {form.data}")
     if form.validate_on_submit():
         try:
-            # Log form data for debugging
-            current_app.logger.info(f"Form data received: {form.data}")
-            db_type = form.type.data
-            host = form.postgres_host.data if db_type == 'postgres' else form.oracle_host.data
-            port = form.postgres_port.data if db_type == 'postgres' else form.oracle_port.data
-            database = form.postgres_database.data if db_type == 'postgres' else None
-            service_name = form.oracle_service_name.data if db_type == 'oracle' else None
+            # Simplified - relies on form structure matching model somewhat
+            new_endpoint = Endpoint()
+            form.populate_obj(new_endpoint) # Populate common fields
 
-            new_endpoint = Endpoint(
-                name=form.name.data,
-                type=db_type,
-                endpoint_type=form.endpoint_type.data,
-                username=form.username.data,
-                password=form.password.data,
-                host=host,
-                port=port,
-                service_name=service_name,
-                dataset=form.dataset.data if form.type.data == 'bigquery' else None,
-                credentials_json=form.credentials_json.data if form.type.data == 'bigquery' else None,
-                database=database,
-                target_schema=form.target_schema.data if form.endpoint_type.data == 'target' else None
-            )
+            # Handle type-specific fields based on form data
+            db_type = form.type.data
+            if db_type == 'postgres':
+                new_endpoint.host = form.postgres_host.data
+                new_endpoint.port = form.postgres_port.data
+                new_endpoint.database = form.postgres_database.data
+                new_endpoint.service_name = None # Clear non-relevant fields
+            elif db_type == 'oracle':
+                new_endpoint.host = form.oracle_host.data
+                new_endpoint.port = form.oracle_port.data
+                new_endpoint.service_name = form.oracle_service_name.data
+                new_endpoint.database = None # Clear non-relevant fields
+            # Add logic for mysql, bigquery if fields exist in form
+            elif db_type == 'mysql':
+                 new_endpoint.host = form.mysql_host.data
+                 new_endpoint.port = form.mysql_port.data
+                 new_endpoint.database = form.mysql_database.data
+                 new_endpoint.service_name = None
+            elif db_type == 'bigquery':
+                 new_endpoint.dataset = form.dataset.data
+                 new_endpoint.credentials_json = form.credentials_json.data
+                 # Clear non-relevant fields
+                 new_endpoint.host = None
+                 new_endpoint.port = None
+                 new_endpoint.service_name = None
+                 new_endpoint.database = None
+
+            if form.endpoint_type.data == 'source':
+                new_endpoint.target_schema = None # Clear target schema for source
+
+            # TODO: Consider encrypting password before saving
+            # new_endpoint.password = encrypt(form.password.data)
+
             db.session.add(new_endpoint)
-            current_app.logger.info("Endpoint added to session. Attempting to commit...")
             db.session.commit()
-            current_app.logger.info("Endpoint successfully committed to the database.")
             flash('Endpoint created successfully', 'success')
             return redirect(url_for('web.dashboard'))
         except Exception as e:
             db.session.rollback()
             flash(f'Error creating endpoint: {str(e)}', 'danger')
             current_app.logger.error(f"Error creating endpoint: {str(e)}", exc_info=True)
-    else:
-        # Log form validation errors
-        current_app.logger.info(f"Form validation errors: {form.data}")
-        current_app.logger.error(f"Form validation errors: {form.errors}")
-        return render_template('create_endpoint.html', form=form)
+    return render_template('create_endpoint.html', form=form, endpoint=None)
 
-@bp.route('/task/create', methods=['GET', 'POST'])
-def create_task():
-    form = TaskForm()
-
-    # Filter endpoints by endpoint_type
-    source_endpoints = Endpoint.query.filter_by(endpoint_type='source').all()
-    target_endpoints = Endpoint.query.filter_by(endpoint_type='target').all()
-
-    # Populate dropdowns with filtered endpoints
-    form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
-    form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
-
-    if form.validate_on_submit():
-        try:
-            new_task = ReplicationTask(
-                name=form.name.data,
-                source_id=int(form.source.data),
-                destination_id=int(form.destination.data),
-                status='stopped',
-                tables={},  # Add default empty values for other required fields
-                cdc_config={},
-                options={},
-                metrics={  # Initialize metrics with default values
-                    'inserts': 0,
-                    'updates': 0,
-                    'deletes': 0,
-                    'bytes_processed': 0,
-                    'latency': 0,
-                    'last_updated': datetime.now(timezone.utc).isoformat(),
-                    'last_position': 0
-                }
-            )
-
-            db.session.add(new_task)
-            db.session.commit()
-            flash('Task created successfully', 'success')
-            return redirect(url_for('web.dashboard'))
-
-        except Exception as e:
-            db.session.rollback()
-            flash(f'Error creating task: {str(e)}', 'danger')
-
-    return render_template('create_task.html', form=form)
-
-@bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
-def edit_task(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
-    print("Task tables:", task.tables)  # Debugging
-
-    form = TaskForm()
-
-    # Filter endpoints by endpoint_type
-    source_endpoints = Endpoint.query.filter_by(endpoint_type='source').all()
-    target_endpoints = Endpoint.query.filter_by(endpoint_type='target').all()
-
-    # Populate dropdowns with filtered endpoints
-    form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
-    form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
-
-    if form.validate_on_submit():
-        try:
-            selected_tables = request.form.get('selected-tables', '[]')
-
-            # Validate JSON format
-            if not selected_tables.strip():
-                selected_tables = '[]'
-
-            try:
-                task.tables = json.loads(selected_tables)
-            except json.JSONDecodeError as e:
-                current_app.logger.error(f"JSON decode error: {str(e)}")
-                task.tables = []
-
-            # Update other task properties
-            task.name = form.name.data
-            task.source_id = int(form.source.data)
-            task.destination_id = int(form.destination.data)
-            task.initial_load = form.initial_load.data
-            task.create_tables = form.create_tables.data
-
-            db.session.commit()
-            flash('Task updated successfully', 'success')
-            return redirect(url_for('web.dashboard'))
-        except Exception as e:
-            db.session.rollback()
-            flash(f'Error updating task: {str(e)}', 'danger')
-            current_app.logger.error(f"Task update error: {str(e)}", exc_info=True)
-
-    # Pre-populate form for existing task
-    if request.method == 'GET':
-        form.name.data = task.name
-        form.source.data = str(task.source_id)
-        form.destination.data = str(task.destination_id)
-        form.initial_load.data = task.initial_load
-        form.create_tables.data = task.create_tables
-
-    return render_template('edit_task.html', form=form, task=task)
-
-@bp.route('/task/delete/<int:task_id>', methods=['POST'])
-def delete_task(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
-    try:
-        db.session.delete(task)
-        db.session.commit()
-        return jsonify({"success": True, "message": "Task deleted successfully"}), 200
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"success": False, "message": str(e)}), 500
-
-# Remove the top-level import
-# from app.replication_worker import run_replication
-
-
-# Endpoint deletion
-@bp.route('/endpoint/delete/<int:endpoint_id>')
-def delete_endpoint(endpoint_id):
-    endpoint = Endpoint.query.get_or_404(endpoint_id)
-    db.session.delete(endpoint)
-    db.session.commit()
-    flash('Endpoint deleted successfully', 'success')
-    return redirect(url_for('web.dashboard'))
-
-
-# Endpoint editing
-@bp.route('/endpoint/edit/<int:endpoint_id>', methods=['GET', 'POST'])
+@bp.route('/endpoint/<int:endpoint_id>/edit', methods=['GET', 'POST'])
 def edit_endpoint(endpoint_id):
-    endpoint = Endpoint.query.get_or_404(endpoint_id)
+    endpoint = db.session.get(Endpoint, endpoint_id)
+    if not endpoint: abort(404)
     form = EndpointForm(obj=endpoint)
 
-    # Manually set the type since the field is disabled
+    # Manually set the type since the field might be disabled in template
     form.type.data = endpoint.type
 
     if request.method == 'GET':
-        # Pre-populate type-specific fields
+        # Pre-populate type-specific fields based on saved endpoint data
+        # This ensures the correct fields are shown in the form initially
         if endpoint.type == 'postgres':
             form.postgres_host.data = endpoint.host
             form.postgres_port.data = endpoint.port
@@ -221,17 +96,19 @@ def edit_endpoint(endpoint_id):
             form.oracle_host.data = endpoint.host
             form.oracle_port.data = endpoint.port
             form.oracle_service_name.data = endpoint.service_name
+        # Add other types (mysql, bigquery) here if needed
 
     if form.validate_on_submit():
         try:
-            # Update common fields
-            endpoint.name = form.name.data
-            endpoint.endpoint_type = form.endpoint_type.data
-            endpoint.username = form.username.data
-            endpoint.password = form.password.data
-            endpoint.target_schema = form.target_schema.data
+            # Use populate_obj for common fields, then handle type-specific ones
+            # Store original password if field is empty, otherwise update
+            original_password = endpoint.password
+            form.populate_obj(endpoint) # Overwrites endpoint with form data
+            if not form.password.data: # If password field left blank, keep original
+                 endpoint.password = original_password
+            # else: Consider re-encrypting if password changed
 
-            # Update type-specific fields
+            # Handle type-specific fields based on endpoint.type (which cannot change)
             if endpoint.type == 'postgres':
                 endpoint.host = form.postgres_host.data
                 endpoint.port = form.postgres_port.data
@@ -242,6 +119,19 @@ def edit_endpoint(endpoint_id):
                 endpoint.port = form.oracle_port.data
                 endpoint.service_name = form.oracle_service_name.data
                 endpoint.database = None
+            # Add logic for mysql, bigquery etc.
+            elif endpoint.type == 'mysql':
+                 endpoint.host = form.mysql_host.data
+                 endpoint.port = form.mysql_port.data
+                 endpoint.database = form.mysql_database.data
+                 endpoint.service_name = None
+            elif endpoint.type == 'bigquery':
+                 endpoint.dataset = form.dataset.data
+                 endpoint.credentials_json = form.credentials_json.data
+                 endpoint.host = None; endpoint.port = None; endpoint.service_name = None; endpoint.database = None
+
+            if endpoint.endpoint_type == 'source':
+                endpoint.target_schema = None
 
             db.session.commit()
             flash('Endpoint updated successfully', 'success')
@@ -254,292 +144,158 @@ def edit_endpoint(endpoint_id):
 
     return render_template('edit_endpoint.html', form=form, endpoint=endpoint)
 
-@bp.route('/api/source/<int:endpoint_id>/tables')
-def get_source_tables(endpoint_id):
-    from app.services.metadata_service import MetadataService
+@bp.route('/endpoint/<int:endpoint_id>/delete', methods=['POST'])
+def delete_endpoint(endpoint_id):
+    endpoint = db.session.get(Endpoint, endpoint_id)
+    if not endpoint:
+        return jsonify({"success": False, "message": "Endpoint not found"}), 404
+    task_count = ReplicationTask.query.filter(
+        (ReplicationTask.source_id == endpoint_id) | (ReplicationTask.destination_id == endpoint_id)
+    ).count()
+    if task_count > 0:
+        return jsonify({"success": False, "message": f"Cannot delete: Used by {task_count} task(s)."}), 400
     try:
-        tables = MetadataService.get_tables(endpoint_id)
-        return jsonify({'tables': sorted(tables)})
-    except Exception as e:
-        current_app.logger.error(f"Table fetch error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@bp.route('/api/source/<int:endpoint_id>/schemas')
-def get_source_schemas(endpoint_id):
-    from app.services.metadata_service import MetadataService
-    try:
-        # Fetch the endpoint object from the database
-        endpoint = Endpoint.query.get_or_404(endpoint_id)
-        # Convert the endpoint object to a dictionary
-        endpoint_data = {
-            'type': endpoint.type,
-            'host': endpoint.host,
-            'port': endpoint.port,
-            'username': endpoint.username,
-            'password': endpoint.password,
-            'service_name': endpoint.service_name,
-            'dataset': endpoint.dataset,
-            'credentials_json': endpoint.credentials_json,
-            'database': endpoint.database
-        }
-        # Pass the dictionary to MetadataService.get_schemas
-        schemas = MetadataService.get_schemas(endpoint_data)
-        return jsonify(schemas)
-    except Exception as e:
-        current_app.logger.error(f"Schema fetch error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-# --- Task Control Routes (Updated for Celery) ---
-
-@bp.route('/task/<int:task_id>/run', methods=['POST'])
-def run_task_api(task_id): # Changed function name slightly
-    task = db.session.get(ReplicationTask, task_id)
-    if not task:
-        return jsonify({"success": False, "message": "Task not found."}), 404
-
-    # Optional: Add logic to prevent starting if already running/queued
-    # if task.status == 'running' or task is already queued:
-    #     return jsonify({"success": False, "message": "Task is already running or queued."}), 409
-
-    # Get start_datetime from request if provided (used by your JS)
-    start_datetime_str = request.json.get('start_datetime')
-    # Note: The Celery task 'run_replication' needs to handle this parameter if used.
-    # The current 'run_replication' signature doesn't use start_datetime. Modify if needed.
-
-    try:
-        # Enqueue the task using Celery's delay() method
-        # Pass necessary arguments defined in the task function signature
-        async_result = run_replication.delay(task.id, perform_initial_load_override=False)
-        current_app.logger.info(f"Task {task.id} queued for execution. Celery task ID: {async_result.id}")
-
-        # Optionally update task status to 'queued' or similar
-        task.status = 'queued' # Or keep as 'stopped' until worker picks it up
+        db.session.delete(endpoint)
         db.session.commit()
-
-        return jsonify({"success": True, "message": f"Task {task.id} queued successfully.", "celery_task_id": async_result.id}), 202 # 202 Accepted
+        return jsonify({"success": True, "message": "Endpoint deleted successfully"}), 200
     except Exception as e:
-        current_app.logger.error(f"Failed to enqueue task {task.id}: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Failed to queue task."}), 500
+        db.session.rollback()
+        current_app.logger.error(f"Error deleting endpoint {endpoint_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"Error deleting endpoint: {str(e)}"}), 500
 
+# --- Task CRUD ---
+@bp.route('/task/create', methods=['GET', 'POST'])
+def create_task():
+    form = TaskForm()
+    # Populate choices dynamically, ensuring IDs are strings for SelectField
+    source_endpoints = Endpoint.query.filter_by(endpoint_type='source').order_by(Endpoint.name).all()
+    target_endpoints = Endpoint.query.filter_by(endpoint_type='target').order_by(Endpoint.name).all()
+    form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
+    form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
 
-@bp.route('/task/<int:task_id>/reload', methods=['POST'])
-def reload_task_api(task_id): # Changed function name slightly
-    task = db.session.get(ReplicationTask, task_id)
-    if not task:
-        return jsonify({"success": False, "message": "Task not found."}), 404
-
-    try:
-        # Enqueue the task with initial load override set to True
-        async_result = run_replication.delay(task.id, perform_initial_load_override=True)
-        current_app.logger.info(f"Task {task.id} queued for reload. Celery task ID: {async_result.id}")
-
-        task.status = 'queued' # Or keep as 'stopped'
-        db.session.commit()
-
-        return jsonify({"success": True, "message": f"Task {task.id} reload queued successfully.", "celery_task_id": async_result.id}), 202 # 202 Accepted
-    except Exception as e:
-        current_app.logger.error(f"Failed to enqueue task {task.id} for reload: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Failed to queue task reload."}), 500
-
-
-# --- Placeholder for Stopping a Task (Requires Celery Control/Revoke API) ---
-@bp.route('/task/<int:task_id>/stop', methods=['POST'])
-def stop_task_api(task_id):
-    task = db.session.get(ReplicationTask, task_id)
-    if not task:
-        return jsonify({"success": False, "message": "Task not found."}), 404
-
-    # Implementation requires interacting with Celery:
-    # 1. Find the Celery task ID associated with the running task (needs to be stored).
-    # 2. Use `celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')`.
-    # 3. Update the task status in your database (`task.status = 'stopped'`).
-    # This needs more complex state management.
-
-    # Simple approach: Just update DB status, Celery task needs to check this status periodically.
-    if task.status == 'running' or task.status == 'queued':
-         task.status = 'stopping' # Signal the worker to stop
-         db.session.commit()
-         current_app.logger.info(f"Attempting to signal task {task.id} to stop.")
-         return jsonify({"success": True, "message": "Task stop signal sent. Worker will stop on next check."}), 200
-    else:
-         return jsonify({"success": False, "message": f"Task status is '{task.status}', cannot stop."}), 400
-
-# --- Placeholder for Task Status API (Requires Celery Result Backend) ---
-@bp.route('/task/<int:task_id>/status', methods=['GET'])
-def get_task_status_api(task_id):
-    task = db.session.get(ReplicationTask, task_id)
-    if not task:
-        return jsonify({"success": False, "message": "Task not found."}), 404
-
-    # Implementation requires:
-    # 1. Storing the Celery task ID when the task is started.
-    # 2. Using `run_replication.AsyncResult(celery_task_id)` to get status from Celery backend.
-    # 3. Combining Celery status with your application's DB status (`task.status`).
-
-    # Simple approach: Just return DB status
-    return jsonify({
-        "success": True,
-        "task_id": task.id,
-        "status": task.status, # Status from your application DB
-        "last_updated": task.last_updated.isoformat() if task.last_updated else None,
-        "last_position": task.last_position
-        # Add metrics here too if needed
-    }), 200
-
-
-@bp.route('/endpoint/test_connection', methods=['POST'])
-def test_connection():
-    from app.services.metadata_service import MetadataService
-    form_data = request.form
-    endpoint_type = form_data.get('type')
-    current_app.logger.info(f"Form data: {form_data}")
-    try:
-        # Create a dictionary of endpoint data
-        endpoint_data = {
-            'type': endpoint_type,
-            'host': form_data.get('host'),
-            'port': form_data.get('port'),
-            'service_name': form_data.get('service_name'),
-            'username': form_data.get('username'),
-            'password': form_data.get('password'),
-            'dataset': form_data.get('dataset'),
-            'credentials_json': form_data.get('credentials_json'),
-            'database': form_data.get('database')
-        }
-        # Base fields common to all types
-        endpoint_data = {
-            'type': endpoint_type,
-            'username': form_data.get('username'),
-            'password': form_data.get('password'),
-            'endpoint_type': form_data.get('endpoint_type'),
-            'target_schema': form_data.get('target_schema')
-        }
-
-        # Type-specific field mapping
-        type_mapping = {
-            'oracle': {
-                'host': 'oracle_host',
-                'port': 'oracle_port',
-                'service_name': 'oracle_service_name'
-            },
-            'postgres': {
-                'host': 'postgres_host',
-                'port': 'postgres_port',
-                'database': 'postgres_database'
-            },
-            'mysql': {
-                'host': 'mysql_host',  # Add these fields to your form if missing
-                'port': 'mysql_port',
-                'database': 'mysql_database'
-            },
-            'bigquery': {
-                'dataset': 'dataset',
-                'credentials_json': 'credentials_json'
-            }
-        }
-
-        # Add type-specific fields
-        if endpoint_type in type_mapping:
-            for key, form_field in type_mapping[endpoint_type].items():
-                endpoint_data[key] = form_data.get(form_field)
-
-        # Handle empty values for numeric fields
-        if endpoint_data.get('port'):
+    if form.validate_on_submit():
+        try:
+            selected_tables_json = request.form.get('selected-tables', '[]')
             try:
-                endpoint_data['port'] = int(endpoint_data['port'])
-            except ValueError:
-                endpoint_data['port'] = None
+                tables_data = json.loads(selected_tables_json)
+                if not isinstance(tables_data, list): raise ValueError("Table data must be a list.")
+            except (json.JSONDecodeError, ValueError) as e:
+                flash(f'Invalid table selection format: {e}', 'danger')
+                # Re-populate choices before re-rendering
+                form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
+                form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
+                return render_template('create_task.html', form=form, task=None)
 
-        # Now use endpoint_data for your database operations
-        print(endpoint_data)  # Debug output
+            default_metrics = {
+                'inserts': 0, 'updates': 0, 'deletes': 0, 'bytes_processed': 0,
+                'latency': 0, 'last_updated': datetime.now(timezone.utc).isoformat(), # Use timezone aware
+                'last_position': None
+            }
+            # Ensure model fields exist or handle potential AttributeError
+            new_task = ReplicationTask(
+                name=form.name.data,
+                source_id=int(form.source.data),
+                destination_id=int(form.destination.data),
+                status='stopped',
+                tables=tables_data,
+                initial_load=form.initial_load.data,
+                create_tables=form.create_tables.data,
+                cdc_config=getattr(form, 'cdc_config', {}), # Example default
+                options=getattr(form, 'options', {}), # Example default
+                metrics=default_metrics,
+                last_position=None
+            )
+            db.session.add(new_task)
+            db.session.commit()
+            flash('Task created successfully', 'success')
+            return redirect(url_for('web.dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error creating task: {str(e)}', 'danger')
+            current_app.logger.error(f"Error creating task: {str(e)}", exc_info=True)
 
-        current_app.logger.info(f"endpoint_data : {endpoint_data}")
+    # Ensure choices are set on initial GET or validation fail
+    form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
+    form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
+    return render_template('create_task.html', form=form, task=None)
 
-        # Use the dictionary directly instead of a TempEndpoint object
-        schemas = MetadataService.get_schemas(endpoint_data)
-        current_app.logger.info(f"schemas : {schemas}")
+# routes.py - Corrected edit_task function block
 
-        if not schemas:
-            return jsonify({'success': False, 'message': 'Connection successful but no schemas found'})
+@bp.route('/task/edit/<int:task_id>', methods=['GET', 'POST'])
+def edit_task(task_id):
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: abort(404)
+    # Pass existing task object to pre-populate form fields matched by name
+    form = TaskForm(obj=task)
 
-        return jsonify({
-            'success': True,
-            'message': f'Connection successful. Found {len(schemas)} schemas',
-            'schemas': list(schemas.keys())[:5]  # Return first 5 schemas as sample
-        })
-    except Exception as e:
-        error_msg = str(e).split('\n')[0]
-        return jsonify({'success': False, 'message': error_msg})
+    # Populate choices for dropdowns
+    source_endpoints = Endpoint.query.filter_by(endpoint_type='source').order_by(Endpoint.name).all()
+    target_endpoints = Endpoint.query.filter_by(endpoint_type='target').order_by(Endpoint.name).all()
+    form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
+    form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
 
-# routes.py
-@bp.route('/task/<int:task_id>/stop', methods=['POST'])
-def stop_task(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
-    if task:
-        # Update the task status to 'stopped'
-        task.status = 'stopped'
+    if form.validate_on_submit():
+        try:
+            # --- Explicitly update task attributes ---
+            task.name = form.name.data
+            # Assign selected IDs (converted to int) to the foreign key fields
+            task.source_id = int(form.source.data)
+            task.destination_id = int(form.destination.data)
+            task.initial_load = form.initial_load.data
+            task.create_tables = form.create_tables.data
+            # Update other fields if they exist in the form (e.g., options)
+            # task.options = json.loads(form.options.data) if hasattr(form, 'options') else task.options
+
+            # Handle tables JSON from hidden input
+            selected_tables_json = request.form.get('selected-tables', '[]')
+            try:
+                tables_data = json.loads(selected_tables_json)
+                if not isinstance(tables_data, list): raise ValueError("Table data must be a list.")
+                task.tables = tables_data
+            except (json.JSONDecodeError, ValueError) as e:
+                # Handle JSON error - flash message and re-render form
+                flash(f'Invalid table selection format: {e}', 'danger')
+                # Repopulate choices before re-rendering
+                form.source.choices = [(str(e.id), e.name) for e in source_endpoints]
+                form.destination.choices = [(str(e.id), e.name) for e in target_endpoints]
+                tables_json_val = json.dumps(task.tables) if task.tables is not None else '[]'
+                return render_template('edit_task.html', form=form, task=task, tables_json_val=tables_json_val)
+            # --- End explicit update ---
+
+            db.session.commit()
+            flash('Task updated successfully', 'success')
+            return redirect(url_for('web.dashboard'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error updating task: {str(e)}', 'danger')
+            current_app.logger.error(f"Task update error: {str(e)}", exc_info=True)
+
+    # Pre-populate form select fields for GET request
+    # (obj=task handles simple fields like name, initial_load, create_tables)
+    if request.method == 'GET':
+        form.source.data = str(task.source_id) # Pre-select dropdown based on ID
+        form.destination.data = str(task.destination_id) # Pre-select dropdown based on ID
+
+    # Pass task tables JSON to template for hidden field/JS population
+    tables_json_val = json.dumps(task.tables) if task.tables is not None else '[]'
+    return render_template('edit_task.html', form=form, task=task, tables_json_val=tables_json_val)
+
+@bp.route('/task/delete/<int:task_id>', methods=['POST'])
+def delete_task(task_id):
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: return jsonify({"success": False, "message": "Task not found"}), 404
+    if task.status in ['running', 'queued', 'stopping']:
+         return jsonify({"success": False, "message": f"Cannot delete task in '{task.status}' state."}), 400
+    try:
+        db.session.delete(task)
         db.session.commit()
-        return jsonify({"success": True, "status": "stopped"}), 200
-    else:
-        return jsonify({"success": False, "message": "Task not found"}), 404
+        return jsonify({"success": True, "message": "Task deleted successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error deleting task {task_id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": f"Error deleting task: {str(e)}"}), 500
 
-@bp.route('/task/<int:task_id>/metrics')
-def get_metrics(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
-    return jsonify({
-        'status': task.status,
-        'metrics': task.metrics or {}
-    })\
-
-
-#@bp.route('/task/<int:task_id>/run', methods=['POST'])
-#def run_task(task_id):
-#    from app.replication_worker import run_replication
-#    from threading import Thread
-#
-#    task = ReplicationTask.query.get_or_404(task_id)
-#    start_datetime = request.json.get('start_datetime')
-#    Thread(target=run_replication, args=(task.id, False, False, start_datetime)).start()
-#    return jsonify({"success": True, "message": "Task started successfully."}), 200
-
-@bp.route('/task/<int:task_id>/resume', methods=['POST'])
-def resume_task(task_id):
-    from app.replication_worker import run_replication
-    from threading import Thread
-
-    task = ReplicationTask.query.get_or_404(task_id)
-    Thread(target=run_replication, args=(task.id, False, False)).start()
-    return jsonify({"success": True, "message": "Task resumed successfully."}), 200
-
-#@bp.route('/task/<int:task_id>/reload', methods=['POST'])
-#def reload_task(task_id):
-#    from app.replication_worker import run_replication
-#    from threading import Thread
-#
-#    task = ReplicationTask.query.get_or_404(task_id)
-#    Thread(target=run_replication, args=(task.id, True, True)).start()
-#    return jsonify({"success": True, "message": "Task reload started successfully."}), 200
-
-@bp.route('/task/<int:task_id>/run', methods=['POST'])
-def run_task_endpoint(task_id): # Renamed endpoint function for clarity
-    task = ReplicationTask.query.get_or_404(task_id)
-    # Optional: Get parameters if needed by the task
-    # start_datetime = request.json.get('start_datetime')
-
-    # Enqueue the task
-    run_replication.delay(task.id) # Pass necessary arguments
-
-    return jsonify({"success": True, "message": f"Task {task.id} queued for execution."}), 202 # 202 Accepted
-
-@bp.route('/task/<int:task_id>/reload', methods=['POST'])
-def reload_task_endpoint(task_id):
-    task = ReplicationTask.query.get_or_404(task_id)
-    # Enqueue the task with initial load override
-    run_replication.delay(task.id, perform_initial_load_override=True)
-    return jsonify({"success": True, "message": f"Task {task.id} reload queued."}), 202
-
-
-# --- API endpoint to fetch schemas/tables ---
-# (Keep or modify based on task-builder.js needs)
+# --- API Routes ---
 @bp.route('/api/endpoints/<int:endpoint_id>/tables', methods=['GET'])
 def get_endpoint_tables(endpoint_id):
     endpoint = db.session.get(Endpoint, endpoint_id)
@@ -552,27 +308,192 @@ def get_endpoint_tables(endpoint_id):
         connector = get_source_connector(endpoint) # Use factory
         connector.connect(config)
         schemas_and_tables = connector.get_schemas_and_tables()
-        # Format for UI (example: list of {'schema': s, 'table': t})
+        # Format: list of {'schema': s, 'table': t}
         formatted_tables = []
         for schema, tables in schemas_and_tables.items():
             for table in tables:
-                formatted_tables.append({'schema': schema, 'table': table})
+                formatted_tables.append({'schema': str(schema), 'table': str(table)})
+        formatted_tables.sort(key=lambda x: (x['schema'], x['table']))
         return jsonify(formatted_tables)
     except Exception as e:
         current_app.logger.error(f"Error fetching tables for endpoint {endpoint_id}: {e}", exc_info=True)
-        return jsonify({"error": f"Failed to fetch tables: {e}"}), 500
+        return jsonify({"error": f"Failed to fetch tables: {str(e)}"}), 500
     finally:
         if connector:
-            try:
-                connector.disconnect()
-            except Exception as e:
-                 current_app.logger.error(f"Error disconnecting after fetching tables: {e}", exc_info=True)
+            try: connector.disconnect()
+            except Exception: pass
 
-@bp.route('/task/control/<int:task_id>/<action>')
-def control_task(task_id, action):
-    task = ReplicationTask.query.get_or_404(task_id)
-    if action == 'stop':
-        task.status = 'stopped'
+@bp.route('/api/source/<int:endpoint_id>/schemas')
+def get_source_schemas(endpoint_id):
+    # Assuming MetadataService is still relevant/used
+    from app.services.metadata_service import MetadataService
+    endpoint = db.session.get(Endpoint, endpoint_id)
+    if not endpoint: abort(404)
+    try:
+        endpoint_data = build_connector_config(endpoint) # Use helper
+        schemas = MetadataService.get_schemas(endpoint_data) # Check if MetadataService uses dict
+        return jsonify(schemas if schemas else {})
+    except Exception as e:
+        current_app.logger.error(f"Schema fetch error: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@bp.route('/endpoint/test_connection', methods=['POST'])
+def test_connection():
+    # Assuming test logic is better placed within connector or specific service
+    # Reusing MetadataService example for now
+    from app.services.metadata_service import MetadataService # Needs review if still used
+    form_data = request.form
+    endpoint_data = {}
+    try:
+        endpoint_type_sel = form_data.get('type')
+        endpoint_data['type'] = endpoint_type_sel
+        endpoint_data['username'] = form_data.get('username')
+        endpoint_data['password'] = form_data.get('password')
+
+        # Simplified mapping - assumes form names match Endpoint model more closely now
+        type_mapping = {
+            'oracle': ['host', 'port', 'service_name'],
+            'postgres': ['host', 'port', 'database'],
+            'mysql': ['host', 'port', 'database'],
+            'bigquery': ['dataset', 'credentials_json']
+        }
+        for key in type_mapping.get(endpoint_type_sel, []):
+            endpoint_data[key] = form_data.get(key) # Get directly if form names match
+
+        # Convert port if present
+        if 'port' in endpoint_data and endpoint_data['port']:
+            endpoint_data['port'] = int(endpoint_data['port'])
+        # Validate JSON if bigquery
+        if endpoint_type_sel == 'bigquery' and endpoint_data.get('credentials_json'):
+            json.loads(endpoint_data['credentials_json'])
+
+        # Remove None values
+        endpoint_data = {k: v for k, v in endpoint_data.items() if v is not None and v != ''}
+
+        # Test connection using a generic approach or specific service
+        # Using MetadataService.get_schemas as proxy for connection test
+        schemas = MetadataService.get_schemas(endpoint_data)
+
+        return jsonify({'success': True, 'message': 'Connection successful!'})
+
+    except json.JSONDecodeError:
+        return jsonify({'success': False, 'message': 'Invalid BigQuery Credentials JSON format.'})
+    except ValueError as ve:
+         return jsonify({'success': False, 'message': f'Configuration Error: {ve}'})
+    except Exception as e:
+        current_app.logger.error(f"Connection test failed: {e}", exc_info=True)
+        error_msg = str(e).split('\n')[0]
+        return jsonify({'success': False, 'message': f'Connection failed: {error_msg}'})
+
+# --- Task Control Routes (Celery) ---
+@bp.route('/task/<int:task_id>/run', methods=['POST'])
+def run_task(task_id): # Changed function name
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+    if task.status in ['running', 'queued', 'stopping']:
+        return jsonify({"success": False, "message": f"Task already active (status: {task.status})."}), 409
+    try:
+        async_result = run_replication.apply_async(args=[task.id], kwargs={'perform_initial_load_override': False})
+        task.status = 'queued'
+        # --- Store Celery Task ID ---
+        if hasattr(task, 'celery_task_id'):
+            task.celery_task_id = async_result.id  # UNCOMMENT THIS LINE
+        else:
+            # This else block should ideally not be needed if migration was successful
+            current_app.logger.error(f"Task model {task.id} is missing 'celery_task_id' field after migration!")
         db.session.commit()
-        flash('Task stopped successfully', 'info')
-    return redirect(url_for('web.dashboard'))
+        current_app.logger.info(f"Task {task.id} queued. Celery ID: {async_result.id}")
+        return jsonify({"success": True, "message": f"Task {task.id} queued.", "celery_task_id": async_result.id}), 202
+    except Exception as e:
+        current_app.logger.error(f"Failed to enqueue task {task.id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Failed to queue task."}), 500
+
+@bp.route('/task/<int:task_id>/reload', methods=['POST'])
+def reload_task(task_id): # Changed function name
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+    if task.status in ['running', 'queued', 'stopping']:
+        return jsonify({"success": False, "message": f"Task already active (status: {task.status}). Cannot reload."}), 409
+    try:
+        async_result = run_replication.apply_async(args=[task.id], kwargs={'perform_initial_load_override': True})
+        task.status = 'queued'
+        # --- Store Celery Task ID ---
+        if hasattr(task, 'celery_task_id'):
+            task.celery_task_id = async_result.id  # UNCOMMENT THIS LINE
+        else:
+            # This else block should ideally not be needed if migration was successful
+            current_app.logger.error(f"Task model {task.id} is missing 'celery_task_id' field after migration!")
+        db.session.commit()
+        current_app.logger.info(f"Task {task.id} queued for reload. Celery ID: {async_result.id}")
+        return jsonify(
+            {"success": True, "message": f"Task {task.id} reload queued.", "celery_task_id": async_result.id}), 202
+    except Exception as e:
+        current_app.logger.error(f"Failed to enqueue reload for task {task.id}: {e}", exc_info=True)
+        return jsonify({"success": False, "message": "Failed to queue task reload."}), 500
+
+@bp.route('/task/<int:task_id>/stop', methods=['POST'])
+# routes.py - Updated stop_task_api function
+
+@bp.route('/task/<int:task_id>/stop', methods=['POST'])
+def stop_task_api(task_id): # Renamed function
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+
+    if task.status == 'running' or task.status == 'queued':
+         task.status = 'stopping'
+         # --- Get Celery Task ID ---
+         # Use getattr for safety in case field was somehow missed, though migrate should ensure it exists
+         celery_task_id = getattr(task, 'celery_task_id', None) # UNCOMMENTED assignment
+         db.session.commit() # Commit status change first
+         current_app.logger.info(f"Signalled task {task.id} to stop by setting status to 'stopping'.")
+
+         # --- Add Celery Revoke Logic ---
+         if celery_task_id: # UNCOMMENTED Check
+             try:
+                 # celery_app should already be imported at the top
+                 # Send terminate signal to worker process
+                 current_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM') # UNCOMMENTED Revoke
+                 current_app.logger.info(f"Sent revoke/terminate signal to Celery task {celery_task_id} for task {task.id}.") # UNCOMMENTED Log
+             except Exception as revoke_e:
+                 current_app.logger.error(f"Failed to send revoke signal to Celery task {celery_task_id}: {revoke_e}") # UNCOMMENTED Error Log
+         else:
+              current_app.logger.warning(f"Cannot send revoke signal for task {task.id}: Celery Task ID not found/stored in DB.") # UNCOMMENTED Warning
+         # --- End Revoke Logic ---
+
+         return jsonify({"success": True, "message": "Task stop requested."}), 200
+    elif task.status == 'stopping':
+         return jsonify({"success": True, "message": "Task is already stopping."}), 200
+    else:
+         return jsonify({"success": False, "message": f"Task status is '{task.status}', cannot stop."}), 400
+
+
+@bp.route('/task/<int:task_id>/status', methods=['GET'])
+def get_task_status_api(task_id): # Renamed function
+    task = db.session.get(ReplicationTask, task_id)
+    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+
+    status_data = {
+        "success": True, "task_id": task.id, "status": task.status,
+        "last_updated": task.last_updated.isoformat() if task.last_updated else None,
+        "last_position": task.last_position,
+        "metrics": task.metrics or {}
+    }
+    # --- Query Celery result backend ---
+    celery_task_id = getattr(task, 'celery_task_id', None) # Safely get ID (UNCOMMENTED)
+    if celery_task_id: # UNCOMMENTED Check
+        try:
+            # celery_app should already be imported at the top
+            async_result = AsyncResult(celery_task_id, app=current_app) # Pass app instance (UNCOMMENTED)
+            status_data["celery_status"] = async_result.status # PENDING, STARTED, SUCCESS, FAILURE etc. (UNCOMMENTED)
+            if async_result.failed():
+                 status_data["celery_error"] = str(async_result.info) # Or async_result.traceback (UNCOMMENTED)
+        except Exception as e:
+            current_app.logger.warning(f"Could not fetch Celery status for task {task.id} (Celery ID: {celery_task_id}): {e}") # UNCOMMENTED Warning
+    # --- End Celery Status Check ---
+
+    return jsonify(status_data), 200
+
+
+    return jsonify(status_data), 200
+
+# --- Remove other duplicate/commented routes ---

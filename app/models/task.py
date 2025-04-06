@@ -6,10 +6,10 @@ class ReplicationTask(db.Model):
     __tablename__ = 'replication_task'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), unique=True, nullable=False)
-    metrics = db.Column(db.JSON)  # Stores latency, counts, etc.
+#    metrics = db.Column(db.JSON)  # Stores latency, counts, etc.
     source_id = db.Column(db.Integer, db.ForeignKey('endpoint.id'), nullable=False)
     destination_id = db.Column(db.Integer, db.ForeignKey('endpoint.id'), nullable=False)
-    tables = db.Column(db.JSON)
+ #   tables = db.Column(db.JSON)
     cdc_type = db.Column(db.String(20))
     cdc_config = db.Column(db.JSON)
     status = db.Column(db.String(20), default='stopped')
@@ -21,7 +21,7 @@ class ReplicationTask(db.Model):
     create_tables = db.Column(db.Boolean, default=True)
     replication_mode = db.Column(db.String(20), default='full')  # full/partial
     merge_enabled = db.Column(db.Boolean, default=True)
-
+    # Inside the ReplicationTask class definition:
     metrics = db.Column(db.JSON, default={  # Initialize metrics with default values
         'inserts': 0,
         'updates': 0,
@@ -31,6 +31,8 @@ class ReplicationTask(db.Model):
         'last_updated': datetime.utcnow().isoformat(),
         'last_position': 0
     })
+    celery_task_id = db.Column(db.String(255), nullable=True, index=True)  # Example field
+
 
     # Fixed relationships (removed duplicates)
     source = db.relationship('Endpoint', foreign_keys=[source_id], backref='source_tasks')

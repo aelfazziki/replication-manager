@@ -19,6 +19,8 @@ def create_app():
 
     logging.basicConfig(level=logging.INFO)
     app.logger.setLevel(logging.INFO)
+    # Inside create_app() in app/__init__.py, after app.config.from_object(...):
+    app.logger.info(f"Connecting to Database: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
     # Initialiser les extensions avec l'app
     db.init_app(app)

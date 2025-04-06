@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from app.interfaces import TargetConnector
 # --- Import the schema converter ---
 from .schema_converter import BasicSqlAlchemyConverter # Adjust import if needed
+from flask import current_app
 
 class SqlAlchemyTargetConnector(TargetConnector):
     """
@@ -71,9 +72,9 @@ class SqlAlchemyTargetConnector(TargetConnector):
             self.engine = create_engine(conn_str)
             # Establish a connection to test validity
             self.connection = self.engine.connect()
-            print(f"Successfully connected to {self.config.get('type')} target.") # Replace with logging
+            current_app.logger.info(f"Successfully connected to {self.config.get('type')} target.") # Replace with logging
         except SQLAlchemyError as e:
-            print(f"Error connecting to {self.config.get('type')} target: {e}") # Replace with logging
+            current_app.logger.info(f"Error connecting to {self.config.get('type')} target: {e}") # Replace with logging
             self.engine = None
             self.connection = None
             raise
@@ -84,18 +85,48 @@ class SqlAlchemyTargetConnector(TargetConnector):
             try:
                 self.connection.close()
             except SQLAlchemyError as e:
-                print(f"Error closing SQLAlchemy connection: {e}") # Replace with logging
+                current_app.logger.error(f"Error closing SQLAlchemy connection: {e}") # Replace with logging
             finally:
                 self.connection = None
         if self.engine:
             try:
                 self.engine.dispose()
             except SQLAlchemyError as e:
-                print(f"Error disposing SQLAlchemy engine: {e}") # Replace with logging
+                current_app.logger.error(f"Error disposing SQLAlchemy engine: {e}") # Replace with logging
             finally:
                 self.engine = None
         self.config = {}
-        print("Disconnected from SQLAlchemy target.") # Replace with logging
+        current_app.logger.info("Disconnected from SQLAlchemy target.") # Replace with logging
+
+    def _get_table(self, schema_name: str, table_name: str) -> Table:
+        """Gets SQLAlchemy Table object, using reflection and caching in self.metadata."""
+        # Construct a unique key for the metadata cache
+        # Handle None schema for databases that don't use it explicitly (like default SQLite)
+        full_table_name = f"{schema_name}.{table_name}" if schema_name else table_name
+
+        if full_table_name in self.metadata.tables:
+            return self.metadata.tables[full_table_name]
+        else:
+            if not self.engine:
+                 raise ConnectionError("Engine not available for table reflection.")
+            try:
+                 # Bind metadata to the engine allows reflection results to be cached
+                 #if self.metadata.bind is None:
+                 #     self.metadata.bind = self.engine
+                 # Reflect table structure from the database into self.metadata
+                 # autoload_with requires the engine or connection
+                 reflected_table = Table(
+                     table_name,
+                     self.metadata, # Use self.metadata for caching
+                     autoload_with=self.engine,
+                     schema=schema_name
+                 )
+                 current_app.logger.debug(f"Reflected target table structure for {full_table_name}")
+                 return reflected_table
+            except NoSuchTableError:
+                 current_app.logger.error(f"Table {full_table_name} not found in target database during reflection for apply_changes.")
+                 raise # Re-raise the error
+
 
     def apply_changes(self, changes: List[Dict[str, Any]]) -> None:
         """
@@ -115,25 +146,25 @@ class SqlAlchemyTargetConnector(TargetConnector):
                     after_data = change.get('after_data', {})
 
                     if not schema or not table_name:
-                        print(f"Skipping change - Missing schema or table name: {change}") # Replace with logging
+                        current_app.logger.info(f"Skipping change - Missing schema or table name: {change}") # Replace with logging
                         continue
 
                     try:
                         target_table = self._get_table(schema, table_name)
                     except (NoSuchTableError, SQLAlchemyError) as e:
-                         print(f"Skipping change - Cannot get table structure for {schema}.{table_name}: {e}") # Replace with logging
+                         current_app.logger.info(f"Skipping change - Cannot get table structure for {schema}.{table_name}: {e}") # Replace with logging
                          continue # Or handle error differently (e.g., fail the batch)
 
                     if operation == 'insert':
                         if not after_data:
-                             print(f"Skipping insert - Missing 'after_data': {change}") # Replace with logging
+                             current_app.logger.info(f"Skipping insert - Missing 'after_data': {change}") # Replace with logging
                              continue
                         stmt = insert(target_table).values(after_data)
                         self.connection.execute(stmt)
 
                     elif operation == 'delete':
                         if not primary_keys_data:
-                             print(f"Skipping delete - Missing 'primary_keys' data: {change}") # Replace with logging
+                             current_app.logger.info(f"Skipping delete - Missing 'primary_keys' data: {change}") # Replace with logging
                              continue
                         stmt = delete(target_table)
                         # Build WHERE clause based on primary keys
@@ -141,12 +172,12 @@ class SqlAlchemyTargetConnector(TargetConnector):
                             if pk_col in target_table.c:
                                 stmt = stmt.where(target_table.c[pk_col] == pk_val)
                             else:
-                                print(f"Warning: PK column '{pk_col}' not found in target table '{target_table.fullname}' for DELETE.") # Replace with logging
+                                current_app.logger.info(f"Warning: PK column '{pk_col}' not found in target table '{target_table.fullname}' for DELETE.") # Replace with logging
                         self.connection.execute(stmt)
 
                     elif operation == 'update':
                         if not primary_keys_data or not after_data:
-                             print(f"Skipping update - Missing 'primary_keys' or 'after_data': {change}") # Replace with logging
+                             current_app.logger.info(f"Skipping update - Missing 'primary_keys' or 'after_data': {change}") # Replace with logging
                              continue
                         stmt = update(target_table)
                         # Build WHERE clause based on primary keys
@@ -154,21 +185,21 @@ class SqlAlchemyTargetConnector(TargetConnector):
                             if pk_col in target_table.c:
                                 stmt = stmt.where(target_table.c[pk_col] == pk_val)
                             else:
-                                print(f"Warning: PK column '{pk_col}' not found in target table '{target_table.fullname}' for UPDATE WHERE.") # Replace with logging
+                                current_app.logger.warning(f"Warning: PK column '{pk_col}' not found in target table '{target_table.fullname}' for UPDATE WHERE.") # Replace with logging
                         # Set values from after_data (excluding PKs if they shouldn't be updated)
                         values_to_update = {k: v for k, v in after_data.items() if k not in primary_keys_data and k in target_table.c}
                         if not values_to_update:
-                             print(f"Skipping update - No non-PK columns found in 'after_data' to update for: {change}") # Replace with logging
+                             current_app.logger.info(f"Skipping update - No non-PK columns found in 'after_data' to update for: {change}") # Replace with logging
                              continue
                         stmt = stmt.values(values_to_update)
                         self.connection.execute(stmt)
 
                     else:
-                        print(f"Skipping change - Unsupported operation '{operation}': {change}") # Replace with logging
+                        current_app.logger.info(f"Skipping change - Unsupported operation '{operation}': {change}") # Replace with logging
 
-            print(f"Successfully applied {len(changes)} structured changes.") # Replace with logging
+            current_app.logger.info(f"Successfully applied {len(changes)} structured changes.") # Replace with logging
         except SQLAlchemyError as e:
-            print(f"Error applying structured changes: {e}") # Replace with logging
+            current_app.logger.error(f"Error applying structured changes: {e}") # Replace with logging
             # Transaction rolls back automatically
             raise
 
@@ -183,20 +214,20 @@ class SqlAlchemyTargetConnector(TargetConnector):
             # SQLAlchemy's inspector doesn't have a simple has_schema, check schemas list
             existing_schemas = inspector.get_schema_names()
             if schema_name.lower() in [s.lower() for s in existing_schemas]:
-                 print(f"Schema '{schema_name}' already exists.") # Replace with logging
+                 current_app.logger.info(f"Schema '{schema_name}' already exists.") # Replace with logging
                  return
 
             # CREATE SCHEMA syntax varies slightly (e.g., AUTHORIZATION in some dialects)
             # Using simple CREATE SCHEMA for broad compatibility, might need adjustments.
             # Ensure schema_name is properly sanitized/quoted if necessary.
-            print(f"Attempting to create schema '{schema_name}'...") # Replace with logging
+            current_app.logger.info(f"Attempting to create schema '{schema_name}'...") # Replace with logging
             with self.connection.begin(): # Use transaction
                  self.connection.execute(text(f'CREATE SCHEMA "{schema_name}"')) # Basic quoting
-            print(f"Schema '{schema_name}' created or already exists.") # Replace with logging
+            current_app.logger.info(f"Schema '{schema_name}' created or already exists.") # Replace with logging
 
         except SQLAlchemyError as e:
             # Handle errors, e.g., permissions, dialect incompatibility
-            print(f"Error creating schema '{schema_name}': {e}") # Replace with logging
+            current_app.logger.error(f"Error creating schema '{schema_name}': {e}") # Replace with logging
             # Check if error indicates it already exists (might happen due to race conditions or specific DB behavior)
             # If not a "schema already exists" error, re-raise.
             raise
@@ -205,101 +236,148 @@ class SqlAlchemyTargetConnector(TargetConnector):
         """
         Create the table in the target based on a standardized definition if it doesn't exist.
         Uses the SchemaConverter for type mapping and SQLAlchemy schema tools for creation.
-
+        *** Corrected to use target schema/table names. ***
         Args:
             source_table_definition: Standardized table definition from the SourceConnector.
             source_type: String identifier for the source DB type (e.g., 'oracle').
-                         Needed by the converter.
         """
         if not self.connection or not self.engine:
             raise ConnectionError("Not connected to target database.")
 
-        schema_name = source_table_definition.get('schema')
-        table_name = source_table_definition.get('table')
-        target_type = self.config.get('type') # Get target type from config
+        source_schema_name = source_table_definition.get('schema')
+        source_table_name = source_table_definition.get('table')
+        target_db_type = self.config.get('type')
 
-        if not schema_name or not table_name:
+        if not source_schema_name or not source_table_name:
              raise ValueError("Source table definition must include 'schema' and 'table' names.")
-        if not target_type:
+        if not target_db_type:
              raise ValueError("Target connector configuration must include 'type'.")
+        if not hasattr(self, 'schema_converter'):
+             raise AttributeError("Schema converter not initialized on target connector.")
+
+        # --- Determine TARGET schema and table names ---
+        target_schema_name = self.config.get('target_schema', source_schema_name) # Use target_schema from config or default to source
+        target_table_name = source_table_name # Usually target table name is same as source
+
+        # --- Apply Case Correction for Target (e.g., Oracle) ---
+        if target_db_type == 'oracle':
+            target_schema_name = target_schema_name.upper()
+            target_table_name = target_table_name.upper()
+        # Add elif for other case-sensitive targets if needed
+
+        current_app.logger.info(f"Checking existence of target table: '{target_schema_name}'.'{target_table_name}'")
 
         inspector = inspect(self.engine)
         try:
-            if inspector.has_table(table_name, schema=schema_name):
-                print(f"Table '{schema_name}'.'{table_name}' already exists in target.") # Replace with logging
+            # --- Use TARGET names for check ---
+            if inspector.has_table(target_table_name, schema=target_schema_name):
+                # --- Corrected Log Message ---
+                current_app.logger.warning(f"Table '{target_schema_name}'.'{target_table_name}' already exists in target.")
                 return
             else:
-                print(f"Table '{schema_name}'.'{table_name}' does not exist. Attempting creation...") # Replace with logging
+                current_app.logger.info(f"Table '{target_schema_name}'.'{target_table_name}' does not exist. Attempting creation...")
 
-                # --- 1. Convert Schema ---
+                # --- 1. Convert Schema using source def and types ---
                 target_table_def = self.schema_converter.convert_schema(
                     source_table_definition,
                     source_type,
-                    target_type
+                    target_db_type
                 )
 
-                # --- 2. Build SQLAlchemy Table Object ---
+                # --- 2. Build SQLAlchemy Table Object using TARGET names ---
                 sqlalchemy_columns = []
                 for col_def in target_table_def.get('columns', []):
+                    # Ensure type is included, handle potential errors during conversion
+                    if 'type' not in col_def or col_def['type'] is None:
+                         raise ValueError(f"Schema conversion failed for column '{col_def.get('name')}': No type information.")
                     col = Column(
                         col_def['name'],
-                        col_def['type'], # This is now a SQLAlchemy Type instance
+                        col_def['type'], # SQLAlchemy Type instance from converter
                         primary_key=col_def.get('primary_key', False),
                         nullable=col_def.get('nullable', True)
-                        # Add server_default, etc. if needed
                     )
                     sqlalchemy_columns.append(col)
 
                 if not sqlalchemy_columns:
-                     raise ValueError(f"No columns defined after conversion for table {schema_name}.{table_name}")
+                     raise ValueError(f"No columns defined after conversion for table {target_schema_name}.{target_table_name}")
 
                 # Bind metadata to engine for reflection/creation context
-                self.metadata.bind = self.engine
+                # Using temporary metadata for create_all avoids conflicts if reflecting later
+                temp_metadata = MetaData()
                 sqlalchemy_table = Table(
-                    table_name,
-                    self.metadata,
-                    *sqlalchemy_columns, # Unpack the list of Column objects
-                    schema=schema_name
+                    target_table_name, # Use TARGET name
+                    temp_metadata,
+                    *sqlalchemy_columns,
+                    schema=target_schema_name # Use TARGET schema
                 )
 
                 # --- 3. Create Table in Database ---
-                # Use transaction for table creation
-                with self.connection.begin():
-                    # create_all checks for existence by default, but we already checked.
-                    # Using checkfirst=False avoids a redundant check.
-                    self.metadata.create_all(self.engine, tables=[sqlalchemy_table], checkfirst=False)
+                current_app.logger.info(f"Executing CREATE TABLE for '{target_schema_name}'.'{target_table_name}'...")
+                with self.connection.begin(): # Use transaction
+                    # create_all will issue CREATE TABLE statement
+                    temp_metadata.create_all(self.engine, tables=[sqlalchemy_table], checkfirst=False)
 
-                print(f"Successfully created table '{schema_name}'.'{table_name}'.") # Replace with logging
+                current_app.logger.info(f"Successfully created table '{target_schema_name}'.'{target_table_name}'.")
 
         except SQLAlchemyError as e:
-            print(f"Error checking/creating table '{schema_name}'.'{table_name}': {e}") # Replace with logging
-            # Consider specific error handling (e.g., permissions, invalid types)
+            current_app.logger.error(f"Error checking/creating table '{target_schema_name}'.'{target_table_name}': {e}", exc_info=True)
             raise
-        except Exception as e: # Catch potential errors during conversion or object creation
-             print(f"Unexpected error during table creation for '{schema_name}'.'{table_name}': {e}") # Replace with logging
+        except Exception as e: # Catch other potential errors (e.g., conversion)
+             current_app.logger.error(f"Unexpected error during table creation for '{target_schema_name}'.'{target_table_name}': {e}", exc_info=True)
              raise
+    from sqlalchemy import Table, MetaData, Column  # Ensure Column is imported
 
     def write_initial_load_chunk(self, schema_name: str, table_name: str, data_chunk: List[Dict[str, Any]]) -> None:
-        """Write a chunk of data during initial load using SQLAlchemy bulk insert."""
+        """
+        Write a chunk of data during initial load using SQLAlchemy Core execution.
+        Builds a minimal Table object based on data keys instead of autoloading.
+        """
         if not self.connection or not self.engine:
             raise ConnectionError("Not connected to target database.")
         if not data_chunk:
             return
 
-        try:
-            # Reflect table structure (or ideally, have it from create_table)
-            # Binding metadata to the engine allows reflection
-            self.metadata.bind = self.engine
-            target_table = Table(table_name, self.metadata, autoload_with=self.engine, schema=schema_name)
+        # --- Build Minimal Table Object ---
+        # Use column names from the first row of the data chunk.
+        # Assumes all chunks have the same columns and data is Dict-like.
+        first_row = data_chunk[0]
+        column_names = list(first_row.keys())
 
-            # Perform bulk insert
+        # Create SQLAlchemy Column objects minimally (type can often be omitted for INSERT)
+        sqlalchemy_columns = [Column(name) for name in column_names]
+
+        # Create a Table object bound to this operation's metadata
+        # Note: This Table object only exists for this insert operation.
+        # It doesn't use autoload and only knows about columns in the data chunk.
+        target_table = Table(
+            table_name,
+            MetaData(), # Use temporary metadata, not self.metadata to avoid conflicts
+            *sqlalchemy_columns,
+            schema=schema_name
+        )
+        # --- End Build Minimal Table Object ---
+
+        try:
+            # Perform bulk insert using the constructed Table object
             with self.connection.begin(): # Use transaction
+                # SQLAlchemy's insert construct will build statement using columns
+                # from the Table object and values from the data_chunk list of dicts.
                 self.connection.execute(target_table.insert(), data_chunk)
-            print(f"Inserted {len(data_chunk)} rows into '{schema_name}'.'{table_name}'.") # Replace with logging
-        except NoSuchTableError:
-             print(f"Error writing initial load: Table '{schema_name}'.'{table_name}' not found. Ensure it was created first.") # Replace with logging
-             raise
+
+            current_app.logger.info(f"Inserted {len(data_chunk)} rows into '{schema_name}'.'{table_name}'.") # Changed log level to debug
+
         except SQLAlchemyError as e:
-            print(f"Error writing initial load chunk to '{schema_name}'.'{table_name}': {e}") # Replace with logging
-            # Consider logging problematic data from data_chunk if possible
+            # Log specific error and potentially the chunk size/keys for debugging
+            current_app.logger.error(
+                f"Error writing initial load chunk to '{schema_name}'.'{table_name}': {e}. "
+                f"Chunk size: {len(data_chunk)}, Columns: {column_names}"
+                , exc_info=True # Include traceback in log
+            )
+            raise # Re-raise the exception to signal failure in the task
+        except Exception as e: # Catch other potential errors
+            current_app.logger.error(
+                f"Unexpected error writing initial load chunk to '{schema_name}'.'{table_name}': {e}. "
+                f"Chunk size: {len(data_chunk)}, Columns: {column_names}"
+                , exc_info=True
+            )
             raise

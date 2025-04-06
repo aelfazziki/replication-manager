@@ -84,7 +84,8 @@ class OracleLogMinerConnector(SourceConnector):
                 # - DICT_FROM_ONLINE_CATALOG: Easiest, but requires supplemental logging.
                 # - COMMITTED_DATA_ONLY: Shows only committed transactions.
                 # - DDL_DICT_TRACKING: Needed if you want to capture DDL via LogMiner (complex).
-                options = "DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG + DBMS_LOGMNR.COMMITTED_DATA_ONLY"
+                options = "DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG"
+#                options = "DBMS_LOGMNR.DICT_FROM_ONLINE_CATALOG + DBMS_LOGMNR.COMMITTED_DATA_ONLY"
                 sql = f"""
                     BEGIN
                         DBMS_LOGMNR.START_LOGMNR(
