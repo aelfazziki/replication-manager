@@ -1,163 +1,126 @@
 {% extends "base.html" %}
+
+{% block title %}Tasks Dashboard - Replication Manager{% endblock %}
+
 {% block content %}
+    {# --- Breadcrumb Nav --- #}
+    {% if breadcrumbs %}
+    <nav aria-label="breadcrumb" class="mt-3">
+      <ol class="breadcrumb">
+        {% for crumb in breadcrumbs %}
+          {% if crumb.url %}
+            <li class="breadcrumb-item"><a href="{{ crumb.url }}">{{ crumb.text }}</a></li>
+          {% else %}
+            <li class="breadcrumb-item active" aria-current="page">{{ crumb.text }}</li>
+          {% endif %}
+        {% endfor %}
+      </ol>
+    </nav>
+    {% endif %}
+    {# --- End Breadcrumb Nav --- #}
 
-    <!-- Tasks Table -->
- <div class="row row-cols-1 row-cols-md-2 g-4" id="task-monitor">
-    {% for task in tasks %}
-    <div class="col" data-task-id="{{ task.id }}">
-        <div class="card h-100">
-          <div class="card-header d-flex justify-content-between align-items-center">
-             <div>
-                <h5 class="mb-0">{{ task.name }}</h5>
-                <small class="text-muted">ID: {{ task.id }}</small>
-             </div>
-    <!-- Keep only this status badge -->
-             <span class="task-status-badge badge bg-{{ 'success' if task.status == 'running' else 'danger' }}">
-                     {{ task.status|upper }}
-             </span>
-          </div>
-            <div class="card-body">
-                <div class="row g-2 mb-3">
-                    <div class="col-6">
-                        <small class="text-muted">Latency</small>
-                        <div class="h5" data-metric="latency">--</div>
-                    </div>
-                    <div class="col-6">
-                        <small class="text-muted">Data Volume</small>
-                        <div class="h5" data-metric="volume">--</div>
-                    </div>
-                </div>
+    <h2><i class="bi bi-list-task"></i> Replication Tasks</h2>
+    <hr>
 
-                <div class="row g-2">
-                    <div class="col-4 text-center">
-                        <div class="text-success">
-                            <small>Inserts</small>
-                            <div class="h5" data-metric="inserts">0</div>
-                        </div>
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4" id="task-monitor">
+        {% for task in tasks %}
+        <div class="col" data-task-id="{{ task.id }}">
+            <div class="card h-100 shadow-sm">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                 <div>
+                    <h5 class="mb-0 card-title">{{ task.name }}</h5>
+                    <small class="text-muted">ID: {{ task.id }}</small>
+                 </div>
+                 {# Dynamic Status Badge #}
+                 <span class="task-status-badge badge rounded-pill
+                       {% if task.status == 'running' %} bg-success
+                       {% elif task.status == 'stopped' %} bg-secondary
+                       {% elif task.status == 'failed' %} bg-danger
+                       {% elif task.status == 'pending' %} bg-warning text-dark
+                       {% elif task.status == 'stopping' %} bg-info text-dark
+                       {% elif task.status == 'completed' %} bg-primary
+                       {% else %} bg-light text-dark {% endif %}">
+                       {{ task.status | upper if task.status else 'UNKNOWN' }}
+                 </span>
+              </div>
+              <div class="card-body">
+                    {# --- Simplified Metrics Display --- #}
+                    <div class="mb-2">
+                        <small class="text-muted">Source:</small>
+                        <span class="fw-bold">{{ task.source.name if task.source else 'N/A' }} ({{ task.source.type if task.source else 'N/A' }})</span>
                     </div>
-                    <div class="col-4 text-center">
-                        <div class="text-warning">
-                            <small>Updates</small>
-                            <div class="h5" data-metric="updates">0</div>
-                        </div>
+                     <div class="mb-3">
+                        <small class="text-muted">Destination:</small>
+                        <span class="fw-bold">{{ task.destination.name if task.destination else 'N/A' }} ({{ task.destination.type if task.destination else 'N/A' }})</span>
                     </div>
-                    <div class="col-4 text-center">
-                        <div class="text-danger">
-                            <small>Deletes</small>
-                            <div class="h5" data-metric="deletes">0</div>
+                    <div class="row g-2 mb-3 text-center border-top pt-2">
+                        <div class="col">
+                            <small class="text-muted d-block">Inserts</small>
+                            <div class="h5 mb-0" data-metric="inserts">{{ task.metrics.inserts | default('--') if task.metrics else '--' }}</div>
                         </div>
+                         <div class="col">
+                            <small class="text-muted d-block">Updates</small>
+                            <div class="h5 mb-0" data-metric="updates">{{ task.metrics.updates | default('--') if task.metrics else '--' }}</div>
+                        </div>
+                        <div class="col">
+                            <small class="text-muted d-block">Deletes</small>
+                            <div class="h5 mb-0" data-metric="deletes">{{ task.metrics.deletes | default('--') if task.metrics else '--' }}</div>
+                        </div>
+                        {# Add other metrics like latency, volume if available #}
                     </div>
-                </div>
+                     {# --- Last Updated / Error --- #}
+                    <div class="text-muted text-center border-top pt-2">
+                        <small data-metric="last_updated">
+                            Last Updated: {{ task.last_updated.strftime('%Y-%m-%d %H:%M:%S') if task.last_updated else 'Never' }} UTC
+                        </small>
+                         {% if task.metrics and task.metrics.error %}
+                         <div class="text-danger small mt-1" data-metric="error">
+                             <i class="bi bi-exclamation-triangle"></i> Error: {{ task.metrics.error }}
+                         </div>
+                         {% endif %}
+                    </div>
+              </div>
+              <div class="card-footer bg-light">
+                 <div class="d-flex justify-content-end gap-2">
+                     {# Task Action Buttons #}
+                     <button class="btn btn-success btn-sm run-btn" data-task-id="{{ task.id }}" {% if task.status=='running' or task.status =='pending' or task.status =='stopping' %}disabled{% endif %}>
+                         <i class="bi bi-play-fill"></i> Run
+                     </button>
+                     <button class="btn btn-warning btn-sm reload-btn" data-task-id="{{ task.id }}" {% if task.status =='running' or task.status =='pending' or task.status =='stopping' %}disabled{% endif %}>
+                         <i class="bi bi-arrow-clockwise"></i> Reload
+                     </button>
+                     <button class="btn btn-danger btn-sm stop-btn" data-task-id="{{ task.id }}" {% if task.status !='running' and task.status != 'pending' %}disabled{% endif %}>
+                         <i class="bi bi-stop-fill"></i> Stop
+                     </button>
+                     <div class="btn-group">
+                       <button type="button" class="btn btn-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                         More
+                       </button>
+                       <ul class="dropdown-menu dropdown-menu-end">
+                         <li><a class="dropdown-item" href="{{ url_for('web.edit_task', task_id=task.id) }}"><i class="bi bi-pencil"></i> Edit</a></li>
+                         <li><hr class="dropdown-divider"></li>
+                         <li><button class="dropdown-item text-danger delete-btn" type="button" onclick="confirmDeleteTask('{{ task.id }}', '{{ task.name }}')" {% if task.status =='running' or task.status =='pending' or task.status =='stopping' %}disabled{% endif %}><i class="bi bi-trash"></i> Delete</button></li>
+                       </ul>
+                     </div>
+                 </div>
+              </div>
             </div>
-            <div class="card-footer bg-transparent">
-                <div class="d-flex justify-content-between">
-                    <small class="text-muted">
-                        Last updated: <span data-metric="last-updated">--</span>
-                    </small>
-
-<div class="btn-group">
-    <!-- Run Button -->
-    <button class="btn btn-sm btn-success run-btn" data-task-id="{{ task.id }}">
-        Run
-    </button>
-    <!-- Stop Button -->
-    <button class="btn btn-sm btn-danger stop-task-btn" data-task-id="{{ task.id }}" {% if task.status != 'running' %}disabled{% endif %}>
-        Stop
-    </button>
-    <!-- Reload Button -->
-    <button class="btn btn-sm btn-warning reload-btn" data-task-id="{{ task.id }}">
-        Reload
-    </button>
-    <!-- Edit Button -->
-    <a href="{{ url_for('web.edit_task', task_id=task.id) }}" class="btn btn-sm btn-primary">
-        Edit
-    </a>
-    <!-- Delete Button -->
-    <button class="btn btn-sm btn-danger delete-task-btn" data-task-id="{{ task.id }}" onclick="return confirm('Delete this task?')">
-        Delete
-    </button>
-</div>
-                </div>
+        </div>
+        {% else %}
+        <div class="col-12">
+            <div class="alert alert-info" role="alert">
+                No replication tasks found. Click "New Task" to create one.
             </div>
         </div>
+        {% endfor %}
     </div>
-    {% else %}
-    <div class="col-12">
-        <div class="alert alert-info">No active replication tasks</div>
-    </div>
-    {% endfor %}
-</div>
-    <!-- Endpoints Table -->
-    <div class="card">
-        <div class="card-header">
-            <h4 class="mb-0">Configured Endpoints</h4>
-        </div>
-        <div class="card-body">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Type</th>
-                        <th>Endpoint Type</th>
-                        <th>Connection Details</th>
-                        <th>Username</th>
-                        <th>Created At</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for endpoint in endpoints %}
-                    <tr>
-                        <td>{{ endpoint.name }}</td>
-                        <td>{{ endpoint.type|upper }}</td>
-                        <td>{{ endpoint.endpoint_type|upper }}</td>
-                        <td>
-                            {% if endpoint.type == 'oracle' %}
-                                {{ endpoint.host }}:{{ endpoint.port }} ({{ endpoint.service_name }})
-                            {% elif endpoint.type == 'postgres' %}
-                                {{ endpoint.host }}:{{ endpoint.port }} ({{ endpoint.database }})
-                            {% elif endpoint.type == 'bigquery' %}
-                                Dataset: {{ endpoint.dataset }}
-                            {% elif endpoint.type == 'mysql' %}
-                                Database: {{ endpoint.database }}
-                            {% endif %}
-                        </td>
-                        <td>{{ endpoint.username }}</td>
-                        <td>{{ endpoint.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                        <td>
-                            <div class="btn-group">
-                                <a href="{{ url_for('web.edit_endpoint', endpoint_id=endpoint.id) }}"
-                                   class="btn btn-sm btn-primary">Edit</a>
-                                <a href="{{ url_for('web.delete_endpoint', endpoint_id=endpoint.id) }}"
-                                   class="btn btn-sm btn-danger"
-                                   onclick="return confirm('Delete this endpoint?')">Delete</a>
-                            </div>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-center">No configured endpoints</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
 
-<div class="container">
-    <!-- Creation Buttons Section -->
-    <div class="d-flex justify-content-between mb-4">
-        <div>
-            <a href="{{ url_for('web.create_task') }}" class="btn btn-primary">
-                <i class="bi bi-plus-circle"></i> New Replication Task
-            </a>
-            <a href="{{ url_for('web.create_endpoint') }}" class="btn btn-success ms-2">
-                <i class="bi bi-server"></i> New Endpoint
-            </a>
-        </div>
-    </div>
-    </div>
+    {# Removed Endpoints Table - Moved to endpoints.html #}
+    {# Removed Creation Buttons - Moved to Navbar #}
+
+{% endblock %}
+
+{% block scripts %}
+    {# Link the JavaScript file for task controls #}
     <script src="{{ url_for('static', filename='js/task_control.js') }}"></script>
-
 {% endblock %}

@@ -1,254 +1,377 @@
 {% extends "base.html" %}
+
+{% block title %}Create Task - Replication Manager{% endblock %}
+
 {% block content %}
-<div class="container">
+    {# --- Breadcrumb Nav --- #}
+    {% if breadcrumbs %}
+    <nav aria-label="breadcrumb" class="mt-3">
+      <ol class="breadcrumb">
+        {% for crumb in breadcrumbs %}
+          {% if crumb.url %}
+            <li class="breadcrumb-item"><a href="{{ crumb.url }}">{{ crumb.text }}</a></li>
+          {% else %}
+            <li class="breadcrumb-item active" aria-current="page">{{ crumb.text }}</li>
+          {% endif %}
+        {% endfor %}
+      </ol>
+    </nav>
+    {% endif %}
+    {# --- End Breadcrumb Nav --- #}
+
     <h2>Create Replication Task</h2>
+    <hr>
+
+    {# Display form errors #}
+    {% if form.errors %}
+    <div class="alert alert-danger">
+        <strong>Please correct the errors below:</strong>
+        <ul>
+            {% for field, errors in form.errors.items() %}
+                {% for error in errors %}
+                    <li>{{ form[field].label.text if form[field].label else field }}: {{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+            {# Also display non-field errors if any #}
+            {% for error in form.non_field_errors() %}
+                 <li>{{ error }}</li>
+             {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <form method="POST" id="task-form">
         {{ form.hidden_tag() }}
-        <input type="hidden" name="selected-tables" id="selected-tables" value="[]">
+        {# Hidden field to store JSON of selected tables #}
+        <input type="hidden" name="selected-tables" id="selected-tables" value="{{ request.form.get('selected-tables', '[]') | forceescape }}">
 
-        <div class="card mb-4">
+        {# --- Task Details Card --- #}
+        <div class="card mb-4 shadow-sm">
             <div class="card-header"><i class="bi bi-pencil-square"></i> Task Details</div>
             <div class="card-body">
                 <div class="mb-3">
                     {{ form.name.label(class="form-label") }}
-                    {{ form.name(class="form-control", placeholder="Enter task name", autocomplete="off") }}
+                    {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else ""), placeholder="Enter a descriptive task name", autocomplete="off") }}
+                    {% if form.name.errors %}
+                        <div class="invalid-feedback">{{ form.name.errors[0] }}</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
 
+        {# --- Endpoint Selection Row --- #}
         <div class="row mb-4">
             <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header bg-primary text-white"><i class="bi bi-database"></i> Source Endpoint</div>
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-primary text-white"><i class="bi bi-box-arrow-up"></i> Source Endpoint</div>
                     <div class="card-body">
                         {{ form.source.label(class="form-label") }}
-                        {{ form.source(class="form-select", autocomplete="off") }}
+                        {{ form.source(class="form-select" + (" is-invalid" if form.source.errors else ""), autocomplete="off") }}
+                        {% if form.source.errors %}
+                            <div class="invalid-feedback">{{ form.source.errors[0] }}</div>
+                        {% endif %}
+                         <div class="form-text">Select the source database connection.</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-6">
-                <div class="card h-100">
-                    <div class="card-header bg-success text-white"><i class="bi bi-box-arrow-right"></i> Destination Endpoint</div>
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header bg-success text-white"><i class="bi bi-box-arrow-down"></i> Destination Endpoint</div>
                     <div class="card-body">
                         {{ form.destination.label(class="form-label") }}
-                        {{ form.destination(class="form-select", autocomplete="off") }}
+                        {{ form.destination(class="form-select" + (" is-invalid" if form.destination.errors else ""), autocomplete="off") }}
+                        {% if form.destination.errors %}
+                            <div class="invalid-feedback">{{ form.destination.errors[0] }}</div>
+                        {% endif %}
+                        <div class="form-text">Select the target database connection.</div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="card mb-4">
-            <div class="card-header">
-                <i class="bi bi-table"></i> Table Selection
-                <span class="badge bg-secondary ms-2" id="selected-count">0</span>
-                <div class="float-end">
-                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" onclick="document.getElementById('source').dispatchEvent(new Event('change'))" title="Refresh Tables">
-                        <i class="bi bi-arrow-clockwise"></i> Refresh
-                    </button>
-                </div>
-            </div>
+        {# --- Table Selection (Requires JavaScript interaction) --- #}
+        <div class="card mb-4 shadow-sm">
+             <div class="card-header"><i class="bi bi-table"></i> Select Tables for Replication</div>
+             <div class="card-body">
+                 <div class="alert alert-info small">
+                    Select a Source Endpoint first. Tables will be loaded automatically.
+                    Use the search boxes to filter schemas/tables. Click table name to add/remove.
+                 </div>
+                 <div class="row">
+                     {# Available Schemas/Tables #}
+                     <div class="col-md-6 border-end">
+                         <h5>Available Source Tables</h5>
+                         <input type="text" id="schema-search" class="form-control form-control-sm mb-2" placeholder="Search schemas/tables...">
+                         <div id="schema-list" class="border rounded p-2" style="max-height: 400px; overflow-y: auto;">
+                             <div class="text-center text-muted p-3" id="schema-loading">Select source endpoint to load tables...</div>
+                             {# Schemas and tables will be loaded here by JS #}
+                         </div>
+                     </div>
+                     {# Selected Tables #}
+                     <div class="col-md-6">
+                         <h5>Selected Tables (<span id="selected-count">0</span>)</h5>
+                          <input type="text" id="selected-search" class="form-control form-control-sm mb-2" placeholder="Search selected...">
+                         <div id="selected-list" class="border rounded p-2" style="max-height: 400px; overflow-y: auto; min-height: 100px;">
+                             {# Selected tables will appear here #}
+                             <div class="text-center text-muted p-3" id="selected-placeholder">Click tables on the left to add them here.</div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+        </div>
+
+        {# --- Task Options --- #}
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header"><i class="bi bi-gear"></i> Task Options</div>
             <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6">
-                        <div class="input-group input-group-sm mb-2">
-                            <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input type="text" id="schema-search" class="form-control" placeholder="Filter schemas/tables..." onkeyup="filterSchemas()">
-                        </div>
-                        <div id="schema-list" class="border rounded p-2" style="max-height: 400px; overflow-y: auto;">
-                            <p class="text-muted">Select a source endpoint to see tables.</p>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                         <div class="input-group input-group-sm mb-2">
-                            <span class="input-group-text"><i class="bi bi-search"></i></span>
-                            <input type="text" id="selected-search" class="form-control" placeholder="Filter selected tables..." onkeyup="filterSelected()">
-                        </div>
-                        <div id="selected-list" class="border rounded p-2 bg-light" style="max-height: 400px; overflow-y: auto;">
-                            </div>
-                    </div>
-                </div>
+                 <div class="form-check mb-2">
+                     {{ form.initial_load(class="form-check-input") }}
+                     {{ form.initial_load.label(class="form-check-label") }}
+                     <div class="form-text">Perform a full load of selected tables when the task first runs.</div>
+                 </div>
+                 <div class="form-check">
+                     {{ form.create_tables(class="form-check-input") }}
+                     {{ form.create_tables.label(class="form-check-label") }}
+                     <div class="form-text">Automatically create tables in the target schema if they don't exist (based on source schema). Requires Target Schema to be set on the Destination Endpoint.</div>
+                 </div>
             </div>
         </div>
 
-        <div class="card mb-4">
-            <div class="card-header"><i class="bi bi-gear"></i> Options</div>
-            <div class="card-body">
-                <div class="form-check form-switch mb-2">
-                    {{ form.initial_load(class="form-check-input") }}
-                    {{ form.initial_load.label(class="form-check-label") }}
-                </div>
-                 <div class="form-check form-switch">
-                    {{ form.create_tables(class="form-check-input") }}
-                    {{ form.create_tables.label(class="form-check-label") }}
-                </div>
-                </div>
-        </div>
-
-        <div class="text-end mb-4">
-             {{ form.submit(class="btn btn-primary") }}
-             <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
+        {# --- Submit Buttons --- #}
+        <div class="mt-4">
+            {{ form.submit(class="btn btn-primary") }}
+            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary ms-2">Cancel</a>
         </div>
     </form>
-</div>
+</div> {# End container #}
 
+{% endblock %}
+
+{# Add this script block at the end, inside {% block scripts %} if using that block #}
+{% block scripts %}
 <script>
-    // Use an array to store selected table objects {schema: '...', table: '...'}
-    let selectedTables = []; // Start empty for create form
+    console.log("Create Task Page Script Loaded.");
 
-    async function fetchSchemasAndTables(endpointId) {
+    const sourceSelect = document.getElementById('source');
+    const schemaListDiv = document.getElementById('schema-list');
+    const selectedListDiv = document.getElementById('selected-list');
+    const selectedCountSpan = document.getElementById('selected-count');
+    const hiddenSelectedInput = document.getElementById('selected-tables');
+    const schemaSearchInput = document.getElementById('schema-search');
+    const selectedSearchInput = document.getElementById('selected-search');
+
+    // *** Ensure selectedPlaceholder is declared with let ***
+    let schemaLoadingDiv = document.getElementById('schema-loading');
+    let selectedPlaceholder = document.getElementById('selected-placeholder');
+    // *** End Variable Declaration Change ***
+
+    let selectedTables = new Set(); // Store selected tables as "schema.table"
+
+    // Function to load tables for selected endpoint
+    async function loadTablesForSource() {
+        const endpointId = sourceSelect.value;
+        console.log(`loadTablesForSource called. Endpoint ID: '${endpointId}'`);
+
         if (!endpointId) {
-            document.getElementById('schema-list').innerHTML = '<p class="text-muted">Select a source endpoint to see tables.</p>';
+            schemaListDiv.innerHTML = '<div class="text-center text-muted p-3" id="schema-loading">Select source endpoint to load tables...</div>';
+            schemaLoadingDiv = document.getElementById('schema-loading'); // Re-select if cleared
+            console.log("No endpoint selected, clearing list.");
             return;
         }
-        console.log(`Workspaceing tables for endpoint ID: ${endpointId}`);
-        document.getElementById('schema-list').innerHTML = '<p class="text-info">Loading tables...</p>'; // Loading indicator
+
+        schemaListDiv.innerHTML = '<div class="text-center text-muted p-3" id="schema-loading"><div class="spinner-border spinner-border-sm" role="status"></div> Loading tables...</div>';
+        schemaLoadingDiv = document.getElementById('schema-loading'); // Re-select if cleared
+        console.log("Displaying 'Loading tables...' message.");
+
+        const apiUrl = `/api/endpoints/${endpointId}/tables`;
+        console.log("Attempting to fetch:", apiUrl);
+
         try {
-            const response = await fetch(`/api/endpoints/${endpointId}/tables`);
+            const response = await fetch(apiUrl);
+            console.log("Fetch response received. Status:", response.status);
+
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                let errorMsg = `HTTP error! status: ${response.status}`;
+                try {
+                   const errorData = await response.json();
+                   errorMsg += ` - ${errorData.error || JSON.stringify(errorData)}`;
+                } catch(e) { /* Ignore if response not JSON */ }
+                throw new Error(errorMsg);
             }
-            const tablesData = await response.json(); // Expects list of {'schema': s, 'table': t}
 
-            const schemas = {};
-            tablesData.forEach(item => {
-                if (!schemas[item.schema]) schemas[item.schema] = [];
-                schemas[item.schema].push(item.table);
-            });
+            const tablesData = await response.json();
+            console.log("Successfully fetched tables data:", tablesData);
 
-            let html = '';
-            Object.keys(schemas).sort().forEach(schema => {
-                html += `
-                <div class="card mb-2 schema-card">
-                    <div class="card-header bg-light p-1 ps-2" style="cursor: pointer;" onclick="toggleSchema('${schema}-tables', this)">
-                        <strong class="text-primary schema-name">${schema}</strong> <small class="text-muted">(${schemas[schema].length})</small>
-                        <i class="bi bi-chevron-down float-end"></i>
-                    </div>
-                    <div id="${schema}-tables" class="list-group list-group-flush schema-tables" style="display: none;">`;
-                schemas[schema].sort().forEach(table => {
-                    const isSelected = selectedTables.some(t => t.schema === schema && t.table === table);
-                    const uniqueId = `chk-${schema}-${table}`.replace(/[^a-zA-Z0-9-_]/g, '_');
-                    html += `
-                        <label class="list-group-item list-group-item-action py-1 table-item" for="${uniqueId}">
-                            <input class="form-check-input me-2" type="checkbox" value="${schema}.${table}"
-                                   id="${uniqueId}" ${isSelected ? 'checked' : ''}
-                                   onchange="handleTableSelection(this, '${schema}', '${table}')">
-                            <span class="table-name">${table}</span>
-                        </label>`;
-                });
-                html += `</div></div>`;
-            });
-            document.getElementById('schema-list').innerHTML = html || '<p class="text-muted">No tables found for this endpoint.</p>';
+            // Group tables by schema
+            const schemas = tablesData.reduce((acc, table) => {
+                const schema = table.schema || 'default';
+                if (!acc[schema]) { acc[schema] = []; }
+                acc[schema].push(table.table);
+                return acc;
+            }, {});
+
+            console.log("Rendering schema list...");
+            renderSchemaList(schemas);
+            console.log("Schema list rendering complete.");
 
         } catch (error) {
-            console.error('Error fetching tables:', error);
-            document.getElementById('schema-list').innerHTML = `<p class="text-danger">Error loading tables: ${error.message}</p>`;
+            console.error('Error in loadTablesForSource:', error);
+            schemaListDiv.innerHTML = `<div class="alert alert-danger small">Error loading tables: ${error.message}</div>`;
+            schemaLoadingDiv = null;
         }
     }
 
-    function handleTableSelection(checkbox, schema, table) {
-        if (checkbox.checked) {
-            addTable(schema, table);
-        } else {
-            removeTable(schema, table);
+    // Function to render the schema list
+    function renderSchemaList(schemas) {
+        schemaListDiv.innerHTML = '';
+        schemaLoadingDiv = null;
+        if (Object.keys(schemas).length === 0) {
+             schemaListDiv.innerHTML = '<div class="text-center text-muted p-3">No tables found for this endpoint.</div>';
+             return;
         }
-    }
-
-    function addTable(schema, table) {
-        if (!selectedTables.some(t => t.schema === schema && t.table === table)) {
-            selectedTables.push({ schema: schema, table: table });
-            console.log('Added:', { schema: schema, table: table }, ' Current:', selectedTables);
-            refreshSelectedList();
-            updateHiddenField();
-        }
-    }
-
-    function removeTable(schema, table) {
-        selectedTables = selectedTables.filter(t => !(t.schema === schema && t.table === table));
-        console.log('Removed:', { schema: schema, table: table }, ' Current:', selectedTables);
-        const uniqueId = `chk-${schema}-${table}`.replace(/[^a-zA-Z0-9-_]/g, '_');
-        const checkbox = document.getElementById(uniqueId);
-        if (checkbox) checkbox.checked = false;
-        refreshSelectedList();
-        updateHiddenField();
-    }
-
-    function refreshSelectedList() {
-        const listElement = document.getElementById('selected-list');
-        if (!listElement) return; // Exit if element not found
-        listElement.innerHTML = ''; // Clear current list
-        selectedTables.sort((a, b) => { // Sort for consistent display
-           if (a.schema !== b.schema) return a.schema.localeCompare(b.schema);
-           return a.table.localeCompare(b.table);
-        }).forEach(tableObj => {
-            const item = document.createElement('div');
-            item.className = 'selected-item d-flex justify-content-between align-items-center p-1 border-bottom';
-            item.innerHTML = `
-                <span title="${tableObj.schema}.${tableObj.table}"><i class="bi bi-table text-muted me-1"></i>${tableObj.schema}.${tableObj.table}</span>
-                <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" title="Remove"
-                        onclick="removeTable('${tableObj.schema}', '${tableObj.table}')">
-                    <i class="bi bi-x-lg"></i>
-                </button>
-            `;
-            listElement.appendChild(item);
-        });
-        const countBadge = document.getElementById('selected-count');
-        if (countBadge) countBadge.textContent = selectedTables.length;
-    }
-
-    function updateHiddenField() {
-        const hiddenInput = document.getElementById('selected-tables');
-        if (hiddenInput) {
-            hiddenInput.value = JSON.stringify(selectedTables); // Stringify array of objects
-            console.log('Updated hidden field:', hiddenInput.value);
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const sourceSelect = document.getElementById('source');
-        if (sourceSelect) {
-            sourceSelect.addEventListener('change', function() {
-                fetchSchemasAndTables(this.value);
+        Object.keys(schemas).sort().forEach(schemaName => {
+            const tables = schemas[schemaName].sort();
+            const schemaId = `schema-${schemaName.replace(/[^a-zA-Z0-9]/g, '-')}`;
+            const isCollapsed = tables.length > 10;
+            const schemaCard = document.createElement('div');
+            schemaCard.className = 'card card-body bg-light mb-2 p-2 schema-card';
+            const header = document.createElement('div');
+            header.className = 'd-flex justify-content-between align-items-center cursor-pointer';
+            header.onclick = () => toggleSchemaTables(schemaId);
+            header.innerHTML = `<span class="fw-bold schema-name">${schemaName}</span><i class="bi ${isCollapsed ? 'bi-chevron-down' : 'bi-chevron-up'} float-end schema-toggle-icon"></i>`;
+            schemaCard.appendChild(header);
+            const tableList = document.createElement('div');
+            tableList.id = schemaId;
+            tableList.className = `mt-2 schema-tables ${isCollapsed ? 'collapse' : 'show'}`;
+            tables.forEach(tableName => {
+                 const fullTableName = `${schemaName}.${tableName}`;
+                 const tableItem = document.createElement('div');
+                 tableItem.className = 'p-1 border-bottom table-item cursor-pointer';
+                 tableItem.textContent = tableName;
+                 tableItem.dataset.schema = schemaName;
+                 tableItem.dataset.table = tableName;
+                 tableItem.onclick = () => toggleTableSelection(schemaName, tableName);
+                 if (selectedTables.has(fullTableName)) { tableItem.classList.add('bg-info-subtle'); }
+                 tableList.appendChild(tableItem);
             });
-            // Initial setup for create form
-            if (sourceSelect.value) fetchSchemasAndTables(sourceSelect.value);
-             else document.getElementById('schema-list').innerHTML = '<p class="text-muted">Select a source endpoint to see tables.</p>';
-        }
-        refreshSelectedList(); // Initial display (likely empty)
-    });
-
-    function toggleSchema(divId, headerElement) {
-        const tablesDiv = document.getElementById(divId);
-        const icon = headerElement.querySelector('i.bi');
-        const isVisible = tablesDiv.style.display === 'block';
-        tablesDiv.style.display = isVisible ? 'none' : 'block';
-        icon.className = isVisible ? 'bi bi-chevron-down float-end' : 'bi bi-chevron-up float-end';
+            schemaCard.appendChild(tableList);
+            schemaListDiv.appendChild(schemaCard);
+        });
+         filterSchemas();
     }
 
+    // Function to toggle table selection
+    function toggleTableSelection(schemaName, tableName) {
+        const fullTableName = `${schemaName}.${tableName}`;
+        const tableItem = schemaListDiv.querySelector(`[data-schema="${schemaName}"][data-table="${tableName}"]`);
+        if (selectedTables.has(fullTableName)) {
+            selectedTables.delete(fullTableName);
+            tableItem?.classList.remove('bg-info-subtle');
+        } else {
+            selectedTables.add(fullTableName);
+             tableItem?.classList.add('bg-info-subtle');
+        }
+        updateSelectedList();
+    }
+
+    // Function to update the display of selected tables
+    function updateSelectedList() {
+        selectedListDiv.innerHTML = ''; // Clear
+        selectedCountSpan.textContent = selectedTables.size;
+
+        if (selectedTables.size === 0) {
+             // This line potentially removes the old #selected-placeholder element
+             selectedListDiv.innerHTML = '<div class="text-center text-muted p-3" id="selected-placeholder">Click tables on the left to add them here.</div>';
+             // Re-find the potentially new element and assign to the 'let' variable
+             selectedPlaceholder = document.getElementById('selected-placeholder'); // Line ~319
+        } else {
+            selectedPlaceholder = null; // Assign null is fine for 'let'
+            const sortedSelected = Array.from(selectedTables).sort();
+            sortedSelected.forEach(fullTableName => {
+                const [schemaName, tableName] = fullTableName.split('.', 2);
+                const item = document.createElement('div');
+                item.className = 'd-flex justify-content-between align-items-center p-1 border-bottom selected-item';
+                item.innerHTML = `<span title="${fullTableName}">${fullTableName}</span><button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeSelectedTable('${fullTableName}')"><i class="bi bi-x-lg"></i></button>`;
+                selectedListDiv.appendChild(item);
+            });
+        }
+        updateHiddenInput();
+        filterSelected();
+    }
+
+    // Function to remove a table from the selected list
+    window.removeSelectedTable = (fullTableName) => {
+        selectedTables.delete(fullTableName);
+        const [schemaName, tableName] = fullTableName.split('.', 2);
+        const tableItem = schemaListDiv.querySelector(`[data-schema="${schemaName}"][data-table="${tableName}"]`);
+        tableItem?.classList.remove('bg-info-subtle');
+        updateSelectedList();
+    }
+
+    // Function to toggle schema visibility
+    window.toggleSchemaTables = (elementId) => {
+         const tableList = document.getElementById(elementId);
+         const icon = tableList.previousElementSibling.querySelector('.schema-toggle-icon');
+         const bsCollapse = new bootstrap.Collapse(tableList, { toggle: false });
+         bsCollapse.toggle();
+         setTimeout(() => {
+             if (tableList.classList.contains('show')) { icon.classList.replace('bi-chevron-down', 'bi-chevron-up'); }
+             else { icon.classList.replace('bi-chevron-up', 'bi-chevron-down'); }
+         }, 200);
+    }
+
+    // Function to filter available schemas/tables
     function filterSchemas() {
-        const search = document.getElementById('schema-search').value.toLowerCase();
+        const search = schemaSearchInput.value.toLowerCase();
         document.querySelectorAll('#schema-list .schema-card').forEach(card => {
             const schemaName = card.querySelector('.schema-name').textContent.toLowerCase();
-            // Also check tables within the schema
-            const tables = Array.from(card.querySelectorAll('.table-name')).map(t => t.textContent.toLowerCase());
+            const tables = Array.from(card.querySelectorAll('.table-item')).map(t => t.textContent.toLowerCase());
             const matches = schemaName.includes(search) || tables.some(t => t.includes(search));
             card.style.display = matches ? '' : 'none';
         });
     }
 
+    // Function to filter selected tables
     function filterSelected() {
-        const search = document.getElementById('selected-search').value.toLowerCase();
+        const search = selectedSearchInput.value.toLowerCase();
         document.querySelectorAll('#selected-list .selected-item').forEach(item => {
             const fullTableName = item.querySelector('span').textContent.toLowerCase();
-            item.style.display = fullTableName.includes(search) ? '' : 'flex'; // Use flex for d-flex
+            item.style.display = fullTableName.includes(search) ? '' : 'flex';
         });
     }
-</script>
 
-<style>
-    .schema-tables { max-height: 400px; overflow-y: auto; }
-    .table-item, .selected-item { transition: background-color 0.2s; }
-    .table-item:hover, .selected-item:hover { background-color: #f8f9fa; }
-    .selected-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-</style>
+    // Function to update the hidden input field before form submission
+    function updateHiddenInput() {
+         const selectedArray = Array.from(selectedTables).map(fullTableName => {
+             const [schema, table] = fullTableName.split('.', 2);
+             return { schema, table };
+         });
+         hiddenSelectedInput.value = JSON.stringify(selectedArray);
+     }
+
+    // --- Event Listener Attachment ---
+    if (sourceSelect) {
+         console.log("Adding 'change' event listener to source endpoint dropdown.");
+         sourceSelect.addEventListener('change', loadTablesForSource);
+         if (sourceSelect.value) {
+              console.log("Source endpoint already selected on load, triggering loadTablesForSource.");
+              loadTablesForSource();
+         }
+     } else {
+          console.error("Source endpoint dropdown element (#source) not found!");
+     }
+    if (schemaSearchInput) { schemaSearchInput.addEventListener('input', filterSchemas); }
+    if (selectedSearchInput) { selectedSearchInput.addEventListener('input', filterSelected); }
+
+
+    // Initialize selected tables from hidden input if page reloaded with errors
+    try { // Line ~411
+         const initialSelected = JSON.parse(hiddenSelectedInput.value || '[]');
+         selectedTables.clear(); // Clear before populating
+         initialSelected.forEach(item => selectedTables.add(`${item.schema}.${item.table}`));
+         updateSelectedList(); // Line ~414 - This call might trigger the error if selectedTables is empty initially
+         console.log("Initialized selected tables from hidden input:", selectedTables);
+     } catch (e) { console.error("Error parsing initial selected tables:", e); } // Line ~415
+
+</script>
 {% endblock %}

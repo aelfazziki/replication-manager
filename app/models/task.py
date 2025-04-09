@@ -1,5 +1,5 @@
-from .. import db
-from datetime import datetime  # Add this import
+from datetime import datetime, timezone
+from app import db # Assuming db is imported from app/__init__.py or similar
 
 
 class ReplicationTask(db.Model):
@@ -15,7 +15,11 @@ class ReplicationTask(db.Model):
     status = db.Column(db.String(20), default='stopped')
     options = db.Column(db.JSON)
     last_position = db.Column(db.JSON)
-    created_at = db.Column(db.DateTime, default=db.func.now())
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    last_updated = db.Column(db.DateTime,
+                             default=lambda: datetime.now(timezone.utc),
+                             onupdate=lambda: datetime.now(timezone.utc))
+
     tables = db.Column(db.JSON)  # Store selected tables
     initial_load = db.Column(db.Boolean, default=False)
     create_tables = db.Column(db.Boolean, default=True)

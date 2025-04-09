@@ -1,167 +1,281 @@
 {% extends "base.html" %}
+
+{% block title %}Edit Endpoint - {{ endpoint.name }}{% endblock %}
+
 {% block content %}
-<div class="container">
-    <h2>Edit Endpoint</h2>
+    {# --- Breadcrumb Nav --- #}
+    {% if breadcrumbs %}
+    <nav aria-label="breadcrumb" class="mt-3">
+      <ol class="breadcrumb">
+        {% for crumb in breadcrumbs %}
+          {% if crumb.url %}
+            <li class="breadcrumb-item"><a href="{{ crumb.url }}">{{ crumb.text }}</a></li>
+          {% else %}
+            <li class="breadcrumb-item active" aria-current="page">{{ crumb.text }}</li>
+          {% endif %}
+        {% endfor %}
+      </ol>
+    </nav>
+    {% endif %}
+    {# --- End Breadcrumb Nav --- #}
+
+    <h2>Edit Endpoint: {{ endpoint.name }}</h2>
+    <hr>
+
+     {# Display form errors #}
+    {% if form.errors %}
+    <div class="alert alert-danger">
+        <strong>Please correct the errors below:</strong>
+        <ul>
+             {% for field, errors in form.errors.items() %}
+                {% for error in errors %}
+                    <li>{{ form[field].label.text if form[field].label else field }}: {{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <form method="POST" id="endpoint-form">
         {{ form.hidden_tag() }}
-<!-- Add this hidden field to include the endpoint type in the form submission -->
-<input type="hidden" name="type" value="{{ endpoint.type }}">
-        <!-- Add this near the top of the form -->
-{% if form.errors %}
-<div class="alert alert-danger">
-    <strong>Form errors:</strong>
-    <ul>
-        {% for field, errors in form.errors.items() %}
-            {% for error in errors %}
-                <li>{{ form[field].label }}: {{ error }}</li>
-            {% endfor %}
-        {% endfor %}
-    </ul>
-</div>
-{% endif %}
-        <!-- Common Fields -->
-        <div class="row mb-3">
-            <div class="col-md-6">
-                {{ form.name.label(class="form-label") }}
-                {{ form.name(class="form-control") }}
-            </div>
-            <div class="col-md-6">
-                {{ form.type.label(class="form-label") }}
-                {{ form.type(class="form-control", disabled=true) }}
-            </div>
+        {# Hidden field to ensure original type is submitted if dropdown is disabled #}
+        <input type="hidden" name="type" value="{{ endpoint.type }}">
+
+         <div class="card mb-4 shadow-sm">
+             <div class="card-header"><i class="bi bi-info-circle"></i> Basic Information</div>
+             <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else "")) }}
+                         {% if form.name.errors %} <div class="invalid-feedback">{{ form.name.errors[0] }}</div> {% endif %}
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        {{ form.type.label(class="form-label") }}
+                        {# Disable type change on edit #}
+                        {{ form.type(class="form-select", disabled=true) }}
+                        <div class="form-text">Endpoint type cannot be changed after creation.</div>
+                    </div>
+                     <div class="col-md-4 mb-3">
+                        {{ form.endpoint_type.label(class="form-label") }}
+                        {{ form.endpoint_type(class="form-select" + (" is-invalid" if form.endpoint_type.errors else ""), onchange="toggleTargetSchema()") }}
+                         {% if form.endpoint_type.errors %} <div class="invalid-feedback">{{ form.endpoint_type.errors[0] }}</div> {% endif %}
+                    </div>
+                </div>
+             </div>
         </div>
 
-        <!-- Common Fields -->
-        <div class="row mb-3">
-            <div class="col-md-6">
-                {{ form.username.label(class="form-label") }}
-                {{ form.username(class="form-control") }}
-            </div>
-            <div class="col-md-6">
-                {{ form.password.label(class="form-label") }}
-                {{ form.password(class="form-control") }}
-            </div>
+         <div class="card mb-4 shadow-sm">
+             <div class="card-header"><i class="bi bi-person-badge"></i> Credentials</div>
+             <div class="card-body">
+                 <div class="row">
+                    <div class="col-md-6 mb-3">
+                        {{ form.username.label(class="form-label") }}
+                        {{ form.username(class="form-control" + (" is-invalid" if form.username.errors else ""), autocomplete="off") }}
+                         {% if form.username.errors %} <div class="invalid-feedback">{{ form.username.errors[0] }}</div> {% endif %}
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        {{ form.password.label(class="form-label") }}
+                        {{ form.password(class="form-control", type="password", placeholder="Leave blank to keep current password") }}
+                         {% if form.password.errors %} <div class="invalid-feedback">{{ form.password.errors[0] }}</div> {% endif %}
+                    </div>
+                </div>
+             </div>
+         </div>
+
+        {# --- Type-Specific Connection Details --- #}
+         <div class="card mb-4 shadow-sm">
+             <div class="card-header"><i class="bi bi-hdd-network"></i> Connection Details</div>
+             <div class="card-body">
+                <div id="postgresFields" class="database-fields">
+                     <div class="row">
+                         <div class="col-md-4 mb-3">
+                             {{ form.postgres_host.label(class="form-label") }}
+                             {{ form.postgres_host(class="form-control") }}
+                         </div>
+                         <div class="col-md-4 mb-3">
+                              {{ form.postgres_port.label(class="form-label") }}
+                             {{ form.postgres_port(class="form-control") }}
+                             {% if form.postgres_port.errors %} <div class="invalid-feedback d-block">{{ form.postgres_port.errors[0] }}</div> {% endif %}
+                         </div>
+                         <div class="col-md-4 mb-3">
+                              {{ form.postgres_database.label(class="form-label") }}
+                             {{ form.postgres_database(class="form-control") }}
+                         </div>
+                    </div>
+                </div>
+
+                <div id="oracleFields" class="database-fields">
+                     <div class="row">
+                         <div class="col-md-4 mb-3">
+                              {{ form.oracle_host.label(class="form-label") }}
+                             {{ form.oracle_host(class="form-control") }}
+                         </div>
+                         <div class="col-md-4 mb-3">
+                              {{ form.oracle_port.label(class="form-label") }}
+                             {{ form.oracle_port(class="form-control") }}
+                             {% if form.oracle_port.errors %} <div class="invalid-feedback d-block">{{ form.oracle_port.errors[0] }}</div> {% endif %}
+                         </div>
+                         <div class="col-md-4 mb-3">
+                              {{ form.oracle_service_name.label(class="form-label") }}
+                             {{ form.oracle_service_name(class="form-control") }}
+                         </div>
+                    </div>
+                </div>
+
+                <div id="mysqlFields" class="database-fields">
+                     <div class="row">
+                         <div class="col-md-4 mb-3">
+                             <label for="mysql_host" class="form-label">MySQL Host</label>
+                             <input type="text" id="mysql_host" name="mysql_host" class="form-control" value="{{ endpoint.host if endpoint.type == 'mysql' else '' }}">
+                         </div>
+                          <div class="col-md-4 mb-3">
+                             <label for="mysql_port" class="form-label">MySQL Port</label>
+                             <input type="number" id="mysql_port" name="mysql_port" class="form-control" value="{{ endpoint.port if endpoint.type == 'mysql' else '' }}">
+                         </div>
+                          <div class="col-md-4 mb-3">
+                             <label for="mysql_database" class="form-label">MySQL Database</label>
+                             <input type="text" id="mysql_database" name="mysql_database" class="form-control" value="{{ endpoint.database if endpoint.type == 'mysql' else '' }}">
+                         </div>
+                    </div>
+                </div>
+
+                <div id="bigqueryFields" class="database-fields">
+                    <div class="mb-3">
+                         {{ form.dataset.label(class="form-label") }}
+                         {{ form.dataset(class="form-control") }}
+                     </div>
+                     <div class="mb-3">
+                         {{ form.credentials_json.label(class="form-label") }}
+                         {{ form.credentials_json(class="form-control", rows="5") }}
+                     </div>
+                </div>
+             </div>
         </div>
 
-        <!-- Dynamic Fields -->
-        <!-- Oracle Fields -->
-        <div id="oracleFields" class="database-fields" style="{% if endpoint.type != 'oracle' %}display: none;{% endif %}">
-            <div class="row mb-3">
-                <div class="col-md-4">
-                    {{ form.oracle_host.label(class="form-label") }}
-                    {{ form.oracle_host(class="form-control") }}
-                </div>
-                <div class="col-md-4">
-                    {{ form.oracle_port.label(class="form-label") }}
-                    {{ form.oracle_port(class="form-control", type="number", min="1", max="65535") }}
-                </div>
-                <div class="col-md-4">
-                    {{ form.oracle_service_name.label(class="form-label") }}
-                    {{ form.oracle_service_name(class="form-control") }}
-                </div>
-            </div>
-        </div>
+         {# --- Target Schema (Conditional) --- #}
+          <div class="card mb-4 shadow-sm" id="target-schema-group">
+              <div class="card-header"><i class="bi bi-folder-symlink"></i> Target Schema (for Target Endpoints)</div>
+              <div class="card-body">
+                 <div class="mb-3">
+                     {{ form.target_schema.label(class="form-label") }}
+                     {{ form.target_schema(class="form-control" + (" is-invalid" if form.target_schema.errors else "")) }}
+                     {% if form.target_schema.errors %} <div class="invalid-feedback">{{ form.target_schema.errors[0] }}</div> {% endif %}
+                     <div class="form-text">Required if 'Create Tables' option is enabled on tasks using this as a destination. Schema must exist or be creatable by the provided user.</div>
+                 </div>
+              </div>
+         </div>
 
-        <!-- PostgreSQL Fields -->
-        <div id="postgresFields" class="database-fields" style="{% if endpoint.type != 'postgres' %}display: none;{% endif %}">
-            <div class="row mb-3">
-                <div class="col-md-4">
-                    {{ form.postgres_host.label(class="form-label") }}
-                    {{ form.postgres_host(class="form-control") }}
-                </div>
-                <div class="col-md-4">
-                    {{ form.postgres_port.label(class="form-label") }}
-                    {{ form.postgres_port(class="form-control", type="number", min="1", max="65535") }}
-                </div>
-                <div class="col-md-4">
-                    {{ form.postgres_database.label(class="form-label") }}
-                    {{ form.postgres_database(class="form-control") }}
-                </div>
-            </div>
-        </div>
-
-        <!-- BigQuery Fields -->
-        <div id="bigqueryFields" class="database-fields" style="{% if endpoint.type != 'bigquery' %}display: none;{% endif %}">
-            <div class="row mb-3">
-                <div class="col-md-6">
-                    {{ form.dataset.label(class="form-label") }}
-                    {{ form.dataset(class="form-control") }}
-                </div>
-                <div class="col-md-6">
-                    {{ form.credentials_json.label(class="form-label") }}
-                    {{ form.credentials_json(class="form-control", rows=5) }}
-                </div>
-            </div>
-        </div>
-
-        <!-- MySQL Fields -->
-        <div id="mysqlFields" class="database-fields" style="{% if endpoint.type != 'mysql' %}display: none;{% endif %}">
-            <div class="row mb-3">
-                <div class="col-md-12">
-                    {{ form.database.label(class="form-label") }}
-                    {{ form.database(class="form-control") }}
-                </div>
-            </div>
-        </div>
-
-        <div class="form-group">
-            {{ form.endpoint_type.label }}
-            {{ form.endpoint_type(class="form-control", onchange="toggleTargetSchema()") }}
-        </div>
-
-        <!-- Target Schema -->
-        <div id="target-schema-group" class="form-group" style="display: none;">
-            {{ form.target_schema.label }}
-            {{ form.target_schema(class="form-control", placeholder="Enter target schema (for destination endpoints)") }}
-        </div>
-
-        <div class="mt-4 d-grid gap-2 d-md-flex justify-content-md-end">
-            <button type="button" class="btn btn-info me-md-2" onclick="testConnection()">
-                <i class="bi bi-plug"></i> Test Connection
-            </button>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-            <a href="{{ url_for('web.dashboard') }}" class="btn btn-secondary">Cancel</a>
+        {# --- Actions --- #}
+        <div class="mt-4">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Changes</button>
+             <button type="button" class="btn btn-info ms-2" onclick="testConnection()"><i class="bi bi-plug"></i> Test Connection</button>
+            <a href="{{ url_for('web.list_endpoints') }}" class="btn btn-secondary ms-2">Cancel</a>
         </div>
     </form>
-</div>
 
+{% endblock %}
+
+{% block scripts %}
 <script>
-document.getElementById('endpoint-form').addEventListener('submit', function() {
-    // Enable all disabled fields before submission
-    this.querySelectorAll('input, select, textarea').forEach(field => {
-        field.disabled = false;
+// Function to show/hide relevant fields based on TYPE (which is disabled on edit)
+function updateFormFields() {
+    const type = document.getElementById('type').value; // Get type from disabled field
+    // Hide all
+    document.querySelectorAll('.database-fields').forEach(div => {
+        div.style.display = 'none';
+         // Don't disable/enable here as they might be pre-filled
     });
-});
-document.addEventListener('DOMContentLoaded', function() {
+    // Show the correct one
+    const activeFieldsDiv = document.getElementById(type + 'Fields');
+    if (activeFieldsDiv) {
+        activeFieldsDiv.style.display = 'block';
+    }
+     // Also update target schema visibility
+    toggleTargetSchema();
+}
+
+// Function to show/hide target schema based on ROLE
+function toggleTargetSchema() {
     const endpointTypeField = document.getElementById('endpoint_type');
     const targetSchemaGroup = document.getElementById('target-schema-group');
+    const targetSchemaInput = document.getElementById('target_schema');
 
-    function toggleTargetSchema() {
-        if (endpointTypeField.value === 'target') {
-            targetSchemaGroup.style.display = 'block';
-        } else {
-            targetSchemaGroup.style.display = 'none';
-        }
+    if (endpointTypeField.value === 'target') {
+        targetSchemaGroup.style.display = 'block';
+        targetSchemaInput.disabled = false;
+    } else {
+        targetSchemaGroup.style.display = 'none';
+        targetSchemaInput.disabled = true;
+        // Don't clear value on edit page hide
+    }
+}
+
+// Function to test connection (same as create_endpoint.html)
+async function testConnection() {
+    const testButton = event.target;
+    const originalButtonText = testButton.innerHTML;
+    testButton.disabled = true;
+    testButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Testing...';
+
+    const form = document.getElementById('endpoint-form');
+    const formData = new FormData(form); // FormData includes disabled fields in some browsers, but values might be unreliable
+
+    // Ensure we get the correct values even if fields are dynamically shown/hidden
+    // Create a clean object with current visible/relevant data
+    const testData = new FormData();
+    testData.append('name', form.name.value);
+    testData.append('type', form.type.value); // Type is important
+    testData.append('endpoint_type', form.endpoint_type.value);
+    testData.append('username', form.username.value);
+    // Get password only if user entered something new, otherwise maybe fetch from server? Or exclude from test?
+    // For simplicity, send current value (might be blank if user didn't enter)
+    testData.append('password', form.password.value || ''); // Send empty string if blank, backend test needs to handle this
+
+    const currentType = form.type.value;
+    if (currentType === 'postgres') {
+         testData.append('postgres_host', form.postgres_host.value);
+         testData.append('postgres_port', form.postgres_port.value);
+         testData.append('postgres_database', form.postgres_database.value);
+    } else if (currentType === 'oracle') {
+         testData.append('oracle_host', form.oracle_host.value);
+         testData.append('oracle_port', form.oracle_port.value);
+         testData.append('oracle_service_name', form.oracle_service_name.value);
+    } else if (currentType === 'mysql') {
+         testData.append('mysql_host', form.mysql_host.value);
+         testData.append('mysql_port', form.mysql_port.value);
+         testData.append('mysql_database', form.mysql_database.value);
+    } else if (currentType === 'bigquery') {
+         testData.append('dataset', form.dataset.value);
+         testData.append('credentials_json', form.credentials_json.value);
     }
 
-    endpointTypeField.addEventListener('change', toggleTargetSchema);
-    toggleTargetSchema(); // Initialize on page load
-});
-
-async function testConnection() {
-    const form = document.getElementById('endpoint-form');
-    const formData = new FormData(form);
 
     try {
         const response = await fetch("{{ url_for('web.test_connection') }}", {
             method: 'POST',
-            body: formData
+            body: testData // Send curated data
         });
         const result = await response.json();
         alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
     } catch (error) {
-        alert('⚠️ Connection test error: ' + error.message);
+        console.error("Connection test error:", error);
+        alert('⚠️ Error during connection test: ' + error.message);
+    } finally {
+         testButton.disabled = false;
+         testButton.innerHTML = originalButtonText;
     }
 }
+
+// Initialize fields on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateFormFields(); // Show fields for the endpoint's type
+});
+
 </script>
+
+<style>
+.database-fields { display: none; }
+/* Add other styles if needed */
+</style>
 {% endblock %}

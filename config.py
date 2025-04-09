@@ -18,5 +18,14 @@ class Config:
 
     # Celery Configuration (Keep as before)
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'amqp://guest:guest@localhost:5672//')
+    # --- Celery Configuration ---
+    # Ensure your broker URL is correct (e.g., RabbitMQ, Redis, etc.)
+    CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'amqp://guest:guest@localhost:5672//')
+
+    # *** ENSURE THIS LINE POINTS TO REDIS ***
     CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
-    # Add other Celery settings if needed
+    # *** END Ensure ***
+
+    # You can remove or keep CELERY_RESULT_EXTENDED = True, it doesn't hurt Redis
+    CELERY_RESULT_EXTENDED = True
+    # --- End Change ---

@@ -9,6 +9,18 @@ import json
 import hashlib
 from datetime import datetime
 from flask import current_app
+# --- Add this import line ---
+from typing import Dict, List
+# --- End Add ---
+
+# Helper function (can be outside the class or static)
+def _get_oracle_dsn(endpoint):
+     port = int(endpoint.port) if endpoint.port else 1521
+     if endpoint.service_name:
+        return cx_Oracle.makedsn(endpoint.host, port, service_name=endpoint.service_name)
+     # Add elif for endpoint.sid if you store SID in your model
+     else:
+        raise ValueError("Oracle endpoint requires either service_name or SID.")
 
 
 class MetadataService:
@@ -232,6 +244,90 @@ class MetadataService:
         except Exception as e:
             current_app.logger.error(f"BigQuery schema creation error: {str(e)}")
             return False
+
+
+    # *** ADD THIS METHOD ***
+    # --- HELPER METHOD for Oracle Connection ---
+    @staticmethod
+    def _get_oracle_connection(endpoint: Endpoint):
+        """Helper to establish an Oracle connection."""
+        logger = current_app.logger # Use Flask logger
+        try:
+            dsn = _get_oracle_dsn(endpoint)
+            logger.debug(f"Attempting Oracle connection to DSN: {dsn} for endpoint {endpoint.id}")
+            conn = cx_Oracle.connect(
+                user=endpoint.username,
+                password=endpoint.password,
+                dsn=dsn
+            )
+            logger.debug(f"Oracle connection successful for endpoint {endpoint.id}")
+            return conn
+        except cx_Oracle.Error as db_err:
+            logger.error(f"Oracle connection error for endpoint {endpoint.id} ('{endpoint.name}'): {db_err}", exc_info=True)
+            raise # Re-raise to be caught by calling function
+        except Exception as e:
+            logger.error(f"Unexpected error connecting to Oracle endpoint {endpoint.id} ('{endpoint.name}'): {e}", exc_info=True)
+            raise
+    # --- END HELPER METHOD ---
+
+
+    @staticmethod
+    def _get_oracle_schemas_and_tables(endpoint: Endpoint) -> Dict[str, List[str]]:
+        """
+        Fetches accessible schemas and tables for an Oracle endpoint.
+        Returns a dictionary mapping schema names to lists of table names.
+        """
+        schemas_with_tables = defaultdict(list)
+        # Define common Oracle system schemas to exclude
+        excluded_schemas = {
+            'SYS', 'SYSTEM', 'OUTLN', 'DBSNMP', 'APPQOSSYS', 'CTXSYS',
+            'DVSYS', 'EXFSYS', 'MDSYS', 'OLAPSYS', 'ORDSYS', 'WMSYS',
+            'XDB', 'GSMADMIN_INTERNAL', 'AUDSYS', 'DBSFWUSER', 'ORDDATA',
+            'ORDPLUGINS', 'SI_INFORMTN_SCHEMA', 'XS$NULL'
+            # Add any other schemas you want to exclude
+        }
+        conn = None
+        try:
+            conn = MetadataService._get_oracle_connection(endpoint)
+            cursor = conn.cursor()
+            # Query ALL_TABLES to get tables accessible by the user
+            # Filter out common system schemas and potentially temporary/nested tables
+            query = """
+                SELECT owner, table_name
+                FROM all_tables
+                WHERE owner NOT IN ({})
+                  AND owner NOT LIKE 'APEX%'
+                  AND nested != 'YES'
+                  AND secondary != 'Y'
+                ORDER BY owner, table_name
+            """.format(', '.join(f"'{s}'" for s in excluded_schemas)) # Use set for faster lookup
+
+            cursor.execute(query)
+            for row in cursor:
+                schema_name = row[0]
+                table_name = row[1]
+                schemas_with_tables[schema_name].append(table_name)
+
+            cursor.close()
+            current_app.logger.info(f"Found {sum(len(v) for v in schemas_with_tables.values())} tables across {len(schemas_with_tables)} schemas for Oracle endpoint {endpoint.id}.")
+            return dict(schemas_with_tables) # Convert back to regular dict
+
+        except cx_Oracle.Error as db_err:
+            # Log specific Oracle error
+            current_app.logger.error(f"Oracle metadata query error for endpoint {endpoint.id}: {db_err}", exc_info=True)
+            # Return empty dict or raise exception depending on desired behavior
+            return {} # Return empty on error to prevent breaking UI? Or raise
+        except Exception as e:
+            current_app.logger.error(f"Unexpected error fetching Oracle metadata for endpoint {endpoint.id}: {e}", exc_info=True)
+            return {} # Return empty on error
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                    current_app.logger.debug(f"Oracle connection closed for endpoint {endpoint.id}")
+                except cx_Oracle.Error:
+                    pass # Ignore errors during close if connection was already bad
+    # *** END ADDED METHOD ***
 
     @staticmethod
     def get_schemas(endpoint_data):

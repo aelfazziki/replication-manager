@@ -29,6 +29,7 @@ def create_app():
     # --- Initialize Celery ---
     # This updates celery_app.conf from Flask config and sets up context task
     init_celery(app)
+    app.logger.info(f"Celery configured with result backend: {celery_app.conf.result_backend}")
 
     # --- Register blueprints AFTER Celery and DB initialization ---
     # No need for 'with app.app_context():' just for registration
