@@ -222,41 +222,67 @@ function toggleTargetSchema() {
 
 // Function to test connection
 async function testConnection() {
-    const testButton = event.target; // Get the button that was clicked
+    const testButton = event.target;
     const originalButtonText = testButton.innerHTML;
     testButton.disabled = true;
     testButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Testing...';
 
-    // Temporarily enable all fields to include them in FormData
-    const form = document.getElementById('endpointForm');
-    const disabledFields = form.querySelectorAll(':disabled');
-    disabledFields.forEach(field => field.disabled = false);
+    const form = document.getElementById('endpoint-form'); // Ensure form has id="endpoint-form"
 
-    const formData = new FormData(form);
+    // --- Manually gather data into a JS object ---
+    const dataToSend = {
+        // Always include type (read from hidden field in edit, select in create)
+        type: form.querySelector('input[name="type"]')
+//        type: form.elements['type']?.value || '', // Use hidden field name="type"
+        name: form.elements['name']?.value || '',
+        endpoint_type: form.elements['endpoint_type']?.value || '', // Include if needed by test logic (currently not)
+        username: form.elements['username']?.value || '',
+        password: form.elements['password']?.value || '', // Send password for test
+        target_schema: form.elements['target_schema']?.value || '',
 
-    // Re-disable fields that should remain disabled based on current selection
-     disabledFields.forEach(field => field.disabled = true); // Better: call updateFormFields() to reset disabled state correctly?
-     updateFormFields(); // Call this to ensure only relevant fields are enabled
+        // Include all possible type-specific fields
+        // Use optional chaining (?.) and nullish coalescing (?? '')
+        postgres_host: form.elements['postgres_host']?.value ?? '',
+        postgres_port: form.elements['postgres_port']?.value ?? '',
+        postgres_database: form.elements['postgres_database']?.value ?? '',
+        oracle_host: form.elements['oracle_host']?.value ?? '',
+        oracle_port: form.elements['oracle_port']?.value ?? '',
+        oracle_service_name: form.elements['oracle_service_name']?.value ?? '',
+        mysql_host: form.elements['mysql_host']?.value ?? '',
+        mysql_port: form.elements['mysql_port']?.value ?? '',
+        mysql_database: form.elements['mysql_database']?.value ?? '',
+        dataset: form.elements['dataset']?.value ?? '',
+        credentials_json: form.elements['credentials_json']?.value ?? ''
+    };
+    // --- End gathering data ---
 
-    // Manually add password if needed, as type="password" might not be included by default in some browsers
-    const passwordField = document.getElementById('password');
-    if (passwordField && passwordField.value && !formData.has('password')) {
-         formData.append('password', passwordField.value);
-    }
+    console.log("--- Data being sent for connection test (JSON): ---");
+    // Avoid logging full password in console
+    let logData = {...dataToSend};
+    if (logData.password) { logData.password = '********'; }
+    console.log(logData);
+    console.log("--------------------------------------------------");
 
 
     try {
         const response = await fetch("{{ url_for('web.test_connection') }}", {
             method: 'POST',
-            body: formData // Send form data directly
+            // *** Set Headers and Body for JSON ***
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+                // Add CSRF token header here if your form uses Flask-WTF CSRF protection
+                // 'X-CSRFToken': form.elements['csrf_token']?.value || ''
+            },
+            body: JSON.stringify(dataToSend) // Send JSON string
+            // *** End JSON Headers/Body ***
         });
-        const result = await response.json();
+        const result = await response.json(); // Expect JSON response
         alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
     } catch (error) {
         console.error("Connection test error:", error);
         alert('⚠️ Error during connection test: ' + error.message);
     } finally {
-         // Restore button state
          testButton.disabled = false;
          testButton.innerHTML = originalButtonText;
     }

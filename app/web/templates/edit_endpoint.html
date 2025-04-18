@@ -38,8 +38,9 @@
 
     <form method="POST" id="endpoint-form">
         {{ form.hidden_tag() }}
-        {# Hidden field to ensure original type is submitted if dropdown is disabled #}
+        {# *** ADD THIS HIDDEN FIELD to submit the type since dropdown is disabled *** #}
         <input type="hidden" name="type" value="{{ endpoint.type }}">
+        {# *** END ADDED FIELD *** #}
 
          <div class="card mb-4 shadow-sm">
              <div class="card-header"><i class="bi bi-info-circle"></i> Basic Information</div>
@@ -53,7 +54,10 @@
                     <div class="col-md-4 mb-3">
                         {{ form.type.label(class="form-label") }}
                         {# Disable type change on edit #}
-                        {{ form.type(class="form-select", disabled=true) }}
+                            {# *** CHANGE: Removed name="type" from disabled select *** #}
+                        {{ form.type(class="form-select", disabled=true, id="type") }} {# Keep id if needed #}
+                        {# *** END CHANGE *** #}
+
                         <div class="form-text">Endpoint type cannot be changed after creation.</div>
                     </div>
                      <div class="col-md-4 mb-3">
@@ -218,45 +222,62 @@ async function testConnection() {
     testButton.disabled = true;
     testButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Testing...';
 
-    const form = document.getElementById('endpoint-form');
-    const formData = new FormData(form); // FormData includes disabled fields in some browsers, but values might be unreliable
+    const form = document.getElementById('endpoint-form'); // Ensure form has id="endpoint-form"
 
-    // Ensure we get the correct values even if fields are dynamically shown/hidden
-    // Create a clean object with current visible/relevant data
-    const testData = new FormData();
-    testData.append('name', form.name.value);
-    testData.append('type', form.type.value); // Type is important
-    testData.append('endpoint_type', form.endpoint_type.value);
-    testData.append('username', form.username.value);
-    // Get password only if user entered something new, otherwise maybe fetch from server? Or exclude from test?
-    // For simplicity, send current value (might be blank if user didn't enter)
-    testData.append('password', form.password.value || ''); // Send empty string if blank, backend test needs to handle this
+    // --- Manually gather data into a JS object ---
+    const dataToSend = {
+        // Always include type (read from hidden field in edit, select in create)
+//        type: form.querySelector('input[name="type"]'),
+//        name: form.querySelector('input[name="name"]'),
+//        endpoint_type: form.querySelector('input[name="endpoint_type"]'),
+//        username: form.querySelector('input[name="username"]'),
+//        password: form.querySelector('input[name="password"]'),
+//        target_schema: form.querySelector('input[name="target_schema"]'),
+        type: form.elements['type']?.value || 'oracle', // Use hidden field name="type"
+        name: form.elements['name']?.value || '',
+        endpoint_type: form.elements['endpoint_type']?.value || '', // Include if needed by test logic (currently not)
+        username: form.elements['username']?.value || '',
+        password: form.elements['password']?.value || '', // Send password for test
+        target_schema: form.elements['target_schema']?.value || '',
 
-    const currentType = form.type.value;
-    if (currentType === 'postgres') {
-         testData.append('postgres_host', form.postgres_host.value);
-         testData.append('postgres_port', form.postgres_port.value);
-         testData.append('postgres_database', form.postgres_database.value);
-    } else if (currentType === 'oracle') {
-         testData.append('oracle_host', form.oracle_host.value);
-         testData.append('oracle_port', form.oracle_port.value);
-         testData.append('oracle_service_name', form.oracle_service_name.value);
-    } else if (currentType === 'mysql') {
-         testData.append('mysql_host', form.mysql_host.value);
-         testData.append('mysql_port', form.mysql_port.value);
-         testData.append('mysql_database', form.mysql_database.value);
-    } else if (currentType === 'bigquery') {
-         testData.append('dataset', form.dataset.value);
-         testData.append('credentials_json', form.credentials_json.value);
-    }
+        // Include all possible type-specific fields
+        // Use optional chaining (?.) and nullish coalescing (?? '')
+        postgres_host: form.elements['postgres_host']?.value ?? '',
+        postgres_port: form.elements['postgres_port']?.value ?? '',
+        postgres_database: form.elements['postgres_database']?.value ?? '',
+        oracle_host: form.elements['oracle_host']?.value ?? '',
+        oracle_port: form.elements['oracle_port']?.value ?? '',
+        oracle_service_name: form.elements['oracle_service_name']?.value ?? '',
+        mysql_host: form.elements['mysql_host']?.value ?? '',
+        mysql_port: form.elements['mysql_port']?.value ?? '',
+        mysql_database: form.elements['mysql_database']?.value ?? '',
+        dataset: form.elements['dataset']?.value ?? '',
+        credentials_json: form.elements['credentials_json']?.value ?? ''
+    };
+    // --- End gathering data ---
+
+    console.log("--- Data being sent for connection test (JSON): ---");
+    // Avoid logging full password in console
+    let logData = {...dataToSend};
+    if (logData.password) { logData.password = '********'; }
+    console.log(logData);
+    console.log("--------------------------------------------------");
 
 
     try {
         const response = await fetch("{{ url_for('web.test_connection') }}", {
             method: 'POST',
-            body: testData // Send curated data
+            // *** Set Headers and Body for JSON ***
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+                // Add CSRF token header here if your form uses Flask-WTF CSRF protection
+                // 'X-CSRFToken': form.elements['csrf_token']?.value || ''
+            },
+            body: JSON.stringify(dataToSend) // Send JSON string
+            // *** End JSON Headers/Body ***
         });
-        const result = await response.json();
+        const result = await response.json(); // Expect JSON response
         alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
     } catch (error) {
         console.error("Connection test error:", error);
@@ -266,6 +287,7 @@ async function testConnection() {
          testButton.innerHTML = originalButtonText;
     }
 }
+
 
 // Initialize fields on page load
 document.addEventListener('DOMContentLoaded', function() {

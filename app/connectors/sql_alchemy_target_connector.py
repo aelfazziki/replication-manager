@@ -326,6 +326,58 @@ class SqlAlchemyTargetConnector(TargetConnector):
              current_app.logger.error(f"Unexpected error during table creation for '{target_schema_name}'.'{target_table_name}': {e}", exc_info=True)
              raise
     from sqlalchemy import Table, MetaData, Column  # Ensure Column is imported
+    # *** ADD THIS METHOD IMPLEMENTATION ***
+    # *** REPLACE existing truncate_table method with this ***
+    def truncate_table(self, schema_name: str, table_name: str) -> None:
+        """Deletes all rows from the specified table using direct DELETE statement."""
+        if not self.connection or not self.engine: # Need engine for inspect
+            raise ConnectionError("Target connection or engine not established.")
+
+        logger = current_app.logger
+        logger.info(f"Attempting to clear data from target table '{schema_name}'.'{table_name}'...")
+
+        inspector = inspect(self.engine)
+        has_table = False
+        try:
+            # Check table existence using inspector, handling case sensitivity for Oracle
+            # Oracle typically stores unquoted identifiers in uppercase.
+            # Adjust schema/table names if needed based on how they are stored/queried.
+            has_table = inspector.has_table(table_name, schema=schema_name)
+            # Optionally, try uppercase if case sensitivity is the issue:
+            # if not has_table:
+            #     has_table = inspector.has_table(table_name.upper(), schema=schema_name.upper())
+            #     if has_table:
+            #         table_name = table_name.upper()
+            #         schema_name = schema_name.upper()
+
+        except Exception as inspect_err:
+             logger.warning(f"Error checking existence for table '{schema_name}'.'{table_name}': {inspect_err}. Assuming it might exist and proceeding with DELETE.", exc_info=True)
+             # If inspect fails, we can still try the DELETE and let it fail if table truly doesn't exist
+             has_table = True # Proceed cautiously
+
+        if not has_table:
+             logger.warning(f"Inspector confirmed table '{schema_name}'.'{table_name}' not found in target, skipping clear.")
+             return # Explicitly return if table not found
+
+        # If table exists (or check failed), attempt DELETE
+        try:
+            # Use standard SQL DELETE FROM statement via text() for broader compatibility
+            # Ensure schema/table names are quoted correctly for the specific database dialect (Oracle uses double quotes)
+            delete_sql = text(f'DELETE FROM "{schema_name}"."{table_name}"')
+
+            with self.connection.begin(): # Use transaction
+                result = self.connection.execute(delete_sql)
+
+            # Log success (rowcount might be -1 or unreliable)
+            logger.info(f"Successfully executed clear command for '{schema_name}'.'{table_name}'.")
+
+        except SQLAlchemyError as e:
+            logger.error(f"Error clearing data from '{schema_name}'.'{table_name}': {e}", exc_info=True)
+            raise # Re-raise to signal failure in the task
+        except Exception as e:
+            logger.error(f"Unexpected error clearing data from '{schema_name}'.'{table_name}': {e}", exc_info=True)
+            raise
+    # *** END REPLACE ***
 
     def write_initial_load_chunk(self, schema_name: str, table_name: str, data_chunk: List[Dict[str, Any]]) -> None:
         """

@@ -6,6 +6,8 @@
  * @param {object} statusData - The status data object fetched from the API.
  */
 function updateTaskCardUI(cardElement, statusData) {
+    // ... (Keep the existing implementation from the previous version) ...
+    // It updates status badge, metrics, and button disabled states
     if (!cardElement || !statusData) return;
 
     const taskId = cardElement.dataset.taskId;
@@ -16,49 +18,38 @@ function updateTaskCardUI(cardElement, statusData) {
     const statusBadge = cardElement.querySelector('.task-status-badge');
     if (statusBadge) {
         statusBadge.textContent = status.toUpperCase();
-        // Remove existing background classes
-        statusBadge.classList.remove('bg-success', 'bg-secondary', 'bg-danger', 'bg-warning', 'bg-info', 'bg-primary', 'bg-light', 'text-dark');
-        // Add appropriate class based on status
+        statusBadge.className = 'task-status-badge badge rounded-pill '; // Reset classes
         let badgeClass = 'bg-light';
-        let textClass = 'text-dark'; // Default text for light backgrounds
+        let textClass = 'text-dark';
         switch (status) {
             case 'running':    badgeClass = 'bg-success'; textClass = ''; break;
             case 'stopped':    badgeClass = 'bg-secondary'; textClass = ''; break;
             case 'failed':     badgeClass = 'bg-danger'; textClass = ''; break;
-            case 'pending':    badgeClass = 'bg-warning'; break; // Keep text dark for yellow
-            case 'stopping':   badgeClass = 'bg-info'; break;    // Keep text dark for cyan
+            case 'pending':    badgeClass = 'bg-warning'; break;
+            case 'stopping':   badgeClass = 'bg-info'; break;
             case 'completed':  badgeClass = 'bg-primary'; textClass = ''; break;
-            default:           badgeClass = 'bg-light'; // Keep text dark for light grey
+            default:           badgeClass = 'bg-light';
         }
         statusBadge.classList.add(badgeClass);
-        if (textClass) {
-            statusBadge.classList.add(textClass);
-        }
+        if (textClass) statusBadge.classList.add(textClass);
     }
 
     // --- Update Metric Elements ---
     cardElement.querySelectorAll('[data-metric]').forEach(el => {
         const metricName = el.dataset.metric;
         let value = metrics[metricName];
-
         if (metricName === 'last_updated' && value) {
-            // Format timestamp nicely
-            try {
-                value = new Date(value).toLocaleString();
-            } catch (e) { /* Ignore formatting errors */ }
+            try { value = new Date(value).toLocaleString(); } catch (e) { /* Ignore */ }
         }
-
         el.textContent = (value !== null && value !== undefined && value !== '') ? value : '--';
-
-        // Handle error display specifically
         if (metricName === 'error') {
              if (value) {
                  el.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error: ${value}`;
-                 el.classList.remove('d-none'); // Ensure error is visible
+                 el.classList.remove('d-none');
                  el.classList.add('text-danger', 'small', 'mt-1');
              } else {
-                 el.textContent = ''; // Clear error message
-                 el.classList.add('d-none'); // Hide element if no error
+                 el.textContent = '';
+                 el.classList.add('d-none');
                  el.classList.remove('text-danger', 'small', 'mt-1');
              }
          }
@@ -68,7 +59,7 @@ function updateTaskCardUI(cardElement, statusData) {
     const runButton = cardElement.querySelector('.run-btn');
     const reloadButton = cardElement.querySelector('.reload-btn');
     const stopButton = cardElement.querySelector('.stop-btn');
-    const deleteButton = cardElement.querySelector('.delete-btn'); // Assuming delete is a button in dropdown
+    const deleteButton = cardElement.querySelector('.delete-btn');
 
     const isRunning = status === 'running';
     const isPending = status === 'pending';
@@ -77,7 +68,7 @@ function updateTaskCardUI(cardElement, statusData) {
 
     if (runButton) runButton.disabled = isActive;
     if (reloadButton) reloadButton.disabled = isActive;
-    if (stopButton) stopButton.disabled = !isRunning && !isPending; // Can only stop if running/pending
+    if (stopButton) stopButton.disabled = !isRunning && !isPending; // Only enable stop if running/pending
     if (deleteButton) deleteButton.disabled = isActive; // Prevent delete if active
 }
 
@@ -291,30 +282,22 @@ function pollAllTaskStatuses() {
 
 // --- Event Listener Setup ---
 document.addEventListener('DOMContentLoaded', function() {
-
-    // Add listeners to the container for event delegation (more efficient)
-    const taskMonitor = document.getElementById('task-monitor'); // Assuming the container has this ID
+    const taskMonitor = document.getElementById('task-monitor');
 
     if (taskMonitor) {
         taskMonitor.addEventListener('click', function(event) {
             const target = event.target;
-            const button = target.closest('button'); // Find the closest button clicked
-            if (!button) return; // Exit if click wasn't on or inside a button
+            const button = target.closest('button');
+            if (!button) return;
 
             const taskId = button.dataset.taskId || button.closest('[data-task-id]')?.dataset.taskId;
-            if (!taskId) return; // Exit if no task ID found
+            if (!taskId) return;
 
             if (button.classList.contains('run-btn')) {
-                // Prompt for start datetime - Consider using a modal instead of prompt
-                const startDatetimeInput = prompt("Enter optional start datetime (YYYY-MM-DD HH:MM:SS) or leave blank:");
-                // Basic validation (optional) - allow empty string
-                // const isValidFormat = startDatetimeInput === '' || /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(startDatetimeInput);
-                // if (!isValidFormat) {
-                //     alert("Invalid datetime format. Please use YYYY-MM-DD HH:MM:SS or leave blank.");
-                //     return;
-                // }
-                 handleTaskAction('run', taskId, { start_datetime: startDatetimeInput || null }, button);
-
+                // *** CHANGE: Remove prompt, just run/resume ***
+                console.log(`Run/Resume clicked for task ${taskId}`);
+                handleTaskAction('run', taskId, null, button); // Pass null for bodyData
+                // *** END CHANGE ***
             } else if (button.classList.contains('reload-btn')) {
                 if (confirm("Are you sure you want to reload this task? This will reset its position and trigger an initial load.")) {
                      handleTaskAction('reload', taskId, null, button);
@@ -324,14 +307,17 @@ document.addEventListener('DOMContentLoaded', function() {
                      handleTaskAction('stop', taskId, null, button);
                 }
              }
-             // Note: Delete is handled by onclick attribute calling confirmDeleteTask directly
+             // Delete is handled by onclick attribute calling confirmDeleteTask
         });
     }
 
     // --- Initial Status Poll and Periodic Polling ---
-    pollAllTaskStatuses(); // Poll immediately on load
-    setInterval(pollAllTaskStatuses, 10000); // Poll every 10 seconds (adjust interval as needed)
+    pollAllTaskStatuses();
+    setInterval(pollAllTaskStatuses, 10000); // Poll every 10 seconds
 
 });
+
+// Make delete function globally accessible if called by onclick
+window.confirmDeleteTask = confirmDeleteTask;
 
 // Note: confirmDeleteTask is defined globally because it's called via onclick attribute in dashboard.html

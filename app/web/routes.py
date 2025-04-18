@@ -1,6 +1,9 @@
 # app/web/routes.py (Final Version & Cleaned + Navigation Enhancements)
+from typing import Optional
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, current_app, abort
+
+from app.interfaces import SourceConnector
 from app.models import Endpoint, ReplicationTask
 from app import db
 from app.forms import TaskForm, EndpointForm
@@ -341,11 +344,15 @@ def run_task_api(task_id):
     task = db.session.get(ReplicationTask, task_id)
     if not task: return jsonify({"success": False, "message": "Task not found."}), 404
 
-    if task.status == 'running': return jsonify({"success": False, "message": "Task is already running."}), 400
+    # Allow running from 'stopped', 'failed', 'completed' states
+    if task.status in ['running', 'pending', 'stopping']:
+        return jsonify({"success": False, "message": f"Task cannot be started from '{task.status}' state."}), 400
+
+#    if task.status == 'running': return jsonify({"success": False, "message": "Task is already running."}), 400
 
     # Get optional start datetime from request
-    data = request.get_json()
-    start_datetime_str = data.get('start_datetime') if data else None
+ #   data = request.get_json()
+ #   start_datetime_str = data.get('start_datetime') if data else None
 
     try:
         # Update status immediately
@@ -355,7 +362,7 @@ def run_task_api(task_id):
         db.session.commit()
 
         # Call Celery task asynchronously
-        celery_task = run_replication.delay(task_id, start_datetime=start_datetime_str)
+        celery_task = run_replication.delay(task_id)
         task.celery_task_id = celery_task.id # Store the new Celery task ID
         db.session.commit()
 
@@ -377,15 +384,38 @@ def run_task_api(task_id):
 @bp.route('/task/<int:task_id>/reload', methods=['POST'])
 def reload_task_api(task_id):
     task = db.session.get(ReplicationTask, task_id)
-    if not task: return jsonify({"success": False, "message": "Task not found."}), 404
+    if not task:
+        return jsonify({"success": False, "message": "Task not found."}), 404
 
-    if task.status == 'running': return jsonify({"success": False, "message": "Task is already running. Stop it first to reload."}), 400
+    if task.status in ['running', 'pending', 'stopping']:
+        return jsonify({"success": False, "message": "Task is already active. Stop it first to reload."}), 400
 
-    # Reload implies resetting position and running initial load again
+    source_connector: Optional[SourceConnector] = None # Initialize connector variable
     try:
+        # --- Get Current SCN from Source BEFORE Initial Load ---
+        current_app.logger.info(f"[Reload Task {task_id}] Fetching current SCN from source endpoint {task.source_id}...")
+        source_endpoint = db.session.get(Endpoint, task.source_id)
+        if not source_endpoint:
+             raise ValueError("Source endpoint for task not found.")
+
+        source_config = build_connector_config(source_endpoint)
+        source_connector = get_source_connector(source_endpoint) # Get connector instance
+        source_connector.connect(source_config) # Connect
+        current_position = source_connector.get_current_position() # Fetch SCN ({'scn': ...})
+        source_connector.disconnect() # Disconnect immediately
+        source_connector = None # Clear reference
+
+        if not current_position or not isinstance(current_position.get('scn'), int): # Validate
+             raise ValueError("Could not retrieve valid current SCN from source endpoint.")
+
+        pre_load_scn = current_position['scn']
+        current_app.logger.info(f"[Reload Task {task_id}] Captured pre-load SCN: {pre_load_scn}. Preparing task for reload.")
+        # --- End Get Current SCN ---
+
+        # --- Update Task for Reload ---
         task.status = 'pending'
-        task.last_position = None # Reset position
-        task.initial_load = True # Force initial load on reload
+        task.last_position = current_position # Store the PRE-LOAD position dictionary
+        task.initial_load = True # Force initial load in the task
         task.metrics = { # Reset metrics
              'inserts': 0, 'updates': 0, 'deletes': 0, 'bytes_processed': 0,
              'latency': 0, 'last_updated': datetime.now(timezone.utc).isoformat(),
@@ -393,26 +423,40 @@ def reload_task_api(task_id):
         }
         task.celery_task_id = None # Clear previous ID
         task.last_updated = datetime.now(timezone.utc)
-        db.session.commit()
+        db.session.commit() # Commit changes before calling task
+        # --- End Update Task ---
 
-        # Call Celery task
-        celery_task = run_replication.delay(task_id, start_datetime=None) # Reload doesn't need start time
+        # --- Call Celery task ---
+        celery_task = run_replication.delay(task_id) # Task will perform init load, then use saved position
         task.celery_task_id = celery_task.id
-        db.session.commit()
+        db.session.commit() # Save Celery ID
 
-        flash(f"Task '{task.name}' submitted for reload.", "info")
+        flash(f"Task '{task.name}' submitted for reload (CDC will start from SCN {pre_load_scn}).", "info")
         return jsonify({"success": True, "message": "Task submitted for reload.", "celery_id": celery_task.id})
 
+    # --- Exception Handling ---
     except SQLAlchemyError as e:
          db.session.rollback()
-         current_app.logger.error(f"DB error reloading task {task_id}: {e}", exc_info=True)
-         return jsonify({"success": False, "message": "Database error."}), 500
+         current_app.logger.error(f"DB error preparing reload for task {task_id}: {e}", exc_info=True)
+         return jsonify({"success": False, "message": "Database error during reload setup."}), 500
+    except ImportError as e:
+         db.session.rollback()
+         current_app.logger.error(f"Import error during reload task {task_id}: {e}", exc_info=True)
+         return jsonify({"success": False, "message": f"Connector error: {e}"}), 500
     except Exception as e:
          db.session.rollback()
-         task.status = 'failed' # Revert status
-         db.session.commit()
-         current_app.logger.error(f"Error reloading task {task_id}: {e}", exc_info=True)
-         return jsonify({"success": False, "message": f"Failed to submit reload task: {e}"}), 500
+         # Attempt to revert status if it was set to pending
+         if task and task.status == 'pending': task.status = 'failed'; db.session.commit()
+         current_app.logger.error(f"Error preparing reload for task {task_id}: {e}", exc_info=True)
+         return jsonify({"success": False, "message": f"Failed to prepare reload task: {e}"}), 500
+    finally:
+         # Ensure connector is disconnected if an error occurred after connection
+         if source_connector and source_connector.conn:
+              try: source_connector.disconnect()
+              except Exception as disconnect_err:
+                   current_app.logger.error(f"[Reload Task {task_id}] Error disconnecting source connector during exception handling: {disconnect_err}", exc_info=True)
+
+
 
 
 @bp.route('/task/<int:task_id>/stop', methods=['POST'])
@@ -587,23 +631,68 @@ def get_table_columns(endpoint_id, schema_name, table_name):
 # --- Connection Test API ---
 @bp.route('/api/test_connection', methods=['POST'])
 def test_connection():
-     form_data = request.form.to_dict() # Get data submitted like a form
-     endpoint_temp = Endpoint( # Create temporary Endpoint object from form data
-         type=form_data.get('type'),
-         host=form_data.get(f"{form_data.get('type')}_host", form_data.get('host')), # Handle type-specific host/port
-         port=form_data.get(f"{form_data.get('type')}_port", form_data.get('port')),
-         username=form_data.get('username'),
-         password=form_data.get('password'),
-         service_name=form_data.get('oracle_service_name'),
-         database=form_data.get(f"{form_data.get('type')}_database", form_data.get('database')),
-         dataset=form_data.get('dataset'),
-         credentials_json=form_data.get('credentials_json')
-     )
+     # *** CHANGE: Get data from JSON body ***
+     if not request.is_json:
+          return jsonify({"success": False, "message": "Invalid request: Content-Type must be application/json"}), 415
+
+     form_data = request.get_json()
+     if not form_data:
+          return jsonify({"success": False, "message": "Invalid request: No JSON data received."}), 400
+
+     current_app.logger.info(f"Received JSON data for connection test: {form_data}") # Log received JSON
+     # *** END CHANGE ***
+     current_app.logger.info(f"Received form data for connection test: {form_data.to_dict()}")
+     # *** END ADDED LOGGING ***
+
+     # --- Create temporary Endpoint object more reliably ---
+     endpoint_type = form_data.get('type') # Get type submitted (now from hidden field if editing)
+#     if not endpoint_type:
+#          return jsonify({"success": False, "message": "Endpoint type missing in submission."})
+     if not endpoint_type:
+          endpoint_type = 'oracle'
+
+     temp_data = {
+         'id': None, # Temporary object has no ID
+         'name': form_data.get('name', 'TEMP'), # Get name if available
+         'type': endpoint_type,
+         'username': form_data.get('username'),
+         'password': form_data.get('password'),
+         'host': None, 'port': None, 'service_name': None, 'database': None,
+         'dataset': None, 'credentials_json': None,
+         # Add other fields if needed by MetadataService._get_oracle_connection or _get_connection_string
+     }
+
+     # Populate type-specific fields based on submitted type
+     if endpoint_type == 'oracle':
+         temp_data['host'] = form_data.get('oracle_host')
+         temp_data['port'] = form_data.get('oracle_port')
+         temp_data['service_name'] = form_data.get('oracle_service_name')
+         temp_data['type'] = 'oracle'
+     elif endpoint_type == 'postgres':
+         temp_data['host'] = form_data.get('postgres_host')
+         temp_data['port'] = form_data.get('postgres_port')
+         temp_data['database'] = form_data.get('postgres_database')
+     elif endpoint_type == 'mysql':
+         temp_data['host'] = form_data.get('mysql_host')
+         temp_data['port'] = form_data.get('mysql_port')
+         temp_data['database'] = form_data.get('mysql_database')
+     elif endpoint_type == 'bigquery':
+         temp_data['dataset'] = form_data.get('dataset')
+         temp_data['credentials_json'] = form_data.get('credentials_json')
+     # Add other types if supported
+
+     # Create the Endpoint object from the populated dictionary
+     endpoint_temp = Endpoint(**temp_data)
+     # --- End temporary Endpoint creation ---
+
+     # Log the data being passed to the service
+     current_app.logger.info(f"Testing connection with effective data: Type='{endpoint_temp.type}', Host='{endpoint_temp.host}', Port='{endpoint_temp.port}', User='{endpoint_temp.username}', Service='{endpoint_temp.service_name}', DB='{endpoint_temp.database}'")
 
      try:
-         # Use MetadataService for testing connection
+         # Call the (now existing) test_connection method
          success, message = MetadataService.test_connection(endpoint_temp)
          return jsonify({"success": success, "message": message})
      except Exception as e:
-         current_app.logger.error(f"Connection test failed: {e}", exc_info=True)
-         return jsonify({"success": False, "message": f"Connection test error: {e}"})
+         current_app.logger.error(f"Connection test failed unexpectedly: {e}", exc_info=True)
+         # Return the specific error message if possible
+         return jsonify({"success": False, "message": f"Connection test error: {str(e)}"})

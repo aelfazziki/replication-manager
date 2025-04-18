@@ -140,6 +140,17 @@ class TargetConnector(abc.ABC):
                               (e.g., from SourceConnector.get_table_schema possibly after conversion).
         """
         pass
+    @abc.abstractmethod
+    def truncate_table(self, schema_name: str, table_name: str) -> None:
+        """
+        Removes all data from the specified table in the target.
+        Implementations should use TRUNCATE or DELETE depending on database/permissions.
+
+        Args:
+            schema_name: The target schema name.
+            table_name: The target table name.
+        """
+        pass
 
     def write_initial_load_chunk(self, schema_name: str, table_name: str, data_chunk: List[Dict[str, Any]]) -> None:
         """

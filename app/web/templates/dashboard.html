@@ -84,7 +84,7 @@
                  <div class="d-flex justify-content-end gap-2">
                      {# Task Action Buttons #}
                      <button class="btn btn-success btn-sm run-btn" data-task-id="{{ task.id }}" {% if task.status=='running' or task.status =='pending' or task.status =='stopping' %}disabled{% endif %}>
-                         <i class="bi bi-play-fill"></i> Run
+                         <i class="bi bi-play-fill"></i> Start/Resume
                      </button>
                      <button class="btn btn-warning btn-sm reload-btn" data-task-id="{{ task.id }}" {% if task.status =='running' or task.status =='pending' or task.status =='stopping' %}disabled{% endif %}>
                          <i class="bi bi-arrow-clockwise"></i> Reload

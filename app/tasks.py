@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__) # Use standard logger
 
 # --- Task Definition ---
 @celery_app.task(bind=True)
-def run_replication(self, task_id: int, start_datetime: Optional[str] = None):
+def run_replication(self, task_id: int):
     """
     Celery task for replication. Uses standard logging and EXPLICIT app context creation.
     """
@@ -143,7 +143,37 @@ def run_replication(self, task_id: int, start_datetime: Optional[str] = None):
 
                 for table_ref in selected_tables:
                     # ... (load chunks for table_ref) ...
-                    chunk_iterator = source_connector.perform_initial_load_chunk(...)
+                    schema_name, table_name = table_ref['schema'], table_ref['table']
+                    logger.info(
+                        f"[Task {task_id}] Processing initial load for source {schema_name}.{table_name} -> target {target_schema_name}.{table_name}")
+
+                    # *** TRUNCATE/CLEAR TARGET TABLE ***
+                    cleared_successfully = False  # Flag to track success
+                    try:
+                        logger.info(
+                            f"[Task {task_id}] Clearing target table {target_schema_name}.{table_name} before initial load...")
+                        target_connector.truncate_table(target_schema_name, table_name)
+                        # Assuming truncate_table now returns normally if skipped, or raises error on failure
+                        cleared_successfully = True  # Assume success if no exception
+                        logger.info(
+                            f"[Task {task_id}] Target table {target_schema_name}.{table_name} clear operation completed (may have been skipped if table didn't exist).")
+                    except Exception as clear_err:
+                        # If clearing fails (e.g., permissions error on DELETE), log error and stop task
+                        logger.error(
+                            f"[Task {task_id}] Failed during target table clear operation for {target_schema_name}.{table_name}: {clear_err}",
+                            exc_info=True)
+                        raise  # Stop the task by re-raising
+
+                    # *** Proceed only if clear appeared successful (didn't raise error) ***
+                    if cleared_successfully:
+                        # --- Proceed with fetching and writing chunks ---
+                        logger.info(f"[Task {task_id}] Performing chunked load for {schema_name}.{table_name}...")
+                        chunk_iterator = source_connector.perform_initial_load_chunk(
+                            schema_name=schema_name,
+                            table_name=table_name,
+                            chunk_size=1000
+                        )
+
                     chunk_count = 0
                     for chunk in chunk_iterator:
                          chunk_count += 1
