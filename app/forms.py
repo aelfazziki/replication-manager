@@ -13,41 +13,44 @@ from wtforms.validators import DataRequired, Length, Optional, NumberRange  # Ad
 
 
 class EndpointForm(FlaskForm):
+    # Basic Information
     name = StringField('Name', validators=[DataRequired()])
-    type = SelectField('Type', choices=[
+    type = SelectField('Database Type', choices=[
+        ('postgres', 'PostgreSQL'),
         ('oracle', 'Oracle'),
         ('mysql', 'MySQL'),
-        ('bigquery', 'BigQuery'),
-        ('postgres', 'PostgreSQL')
+        ('bigquery', 'BigQuery')
     ], validators=[DataRequired()])
-    endpoint_type = SelectField('Endpoint Type', choices=[
+    endpoint_type = SelectField('Endpoint Role', choices=[
         ('source', 'Source'),
         ('target', 'Target')
     ], validators=[DataRequired()])
+
+    # Credentials
     username = StringField('Username', validators=[DataRequired()])
-    password = StringField('Password', validators=[DataRequired()])
-    target_schema = StringField('Target Schema')
+    password = PasswordField('Password', validators=[Optional()])
 
-    # PostgreSQL-specific fields
-    postgres_host = StringField('PostgreSQL Host')
-    postgres_port = IntegerField('PostgreSQL Port', validators=[
-        Optional(),
-        NumberRange(min=1, max=65535)
-    ])
-    postgres_database = StringField('PostgreSQL Database')
+    # PostgreSQL Fields
+    postgres_host = StringField('Host', validators=[Optional()])
+    postgres_port = IntegerField('Port', validators=[Optional(), NumberRange(min=1, max=65535)])
+    postgres_database = StringField('Database', validators=[Optional()])
 
-    # Oracle-specific fields
-    oracle_host = StringField('Oracle Host')
-    oracle_port = IntegerField('Oracle Port', validators=[
-        Optional(),
-        NumberRange(min=1, max=65535)
-    ])
-    oracle_service_name = StringField('Oracle Service Name')
+    # Oracle Fields
+    oracle_host = StringField('Host', validators=[Optional()])
+    oracle_port = IntegerField('Port', validators=[Optional(), NumberRange(min=1, max=65535)])
+    oracle_service_name = StringField('Service Name', validators=[Optional()])
 
-    # Other database type fields
-    dataset = StringField('BigQuery Dataset')
-    credentials_json = TextAreaField('BigQuery Credentials JSON')
-    database = StringField('MySQL Database')
+    # MySQL Fields
+    mysql_host = StringField('Host', validators=[Optional()])
+    mysql_port = IntegerField('Port', validators=[Optional(), NumberRange(min=1, max=65535)])
+    mysql_database = StringField('Database', validators=[Optional()])
+
+    # BigQuery Fields
+    dataset = StringField('Dataset', validators=[Optional()])
+    credentials_json = TextAreaField('Service Account JSON', validators=[Optional()])
+
+    # Target Schema (for target endpoints)
+    target_schema = StringField('Target Schema', validators=[Optional()])
 
     def validate(self, extra_validators=None):
         # First run default validation

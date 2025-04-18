@@ -631,68 +631,50 @@ def get_table_columns(endpoint_id, schema_name, table_name):
 # --- Connection Test API ---
 @bp.route('/api/test_connection', methods=['POST'])
 def test_connection():
-     # *** CHANGE: Get data from JSON body ***
-     if not request.is_json:
-          return jsonify({"success": False, "message": "Invalid request: Content-Type must be application/json"}), 415
+    if not request.is_json:
+        return jsonify({"success": False, "message": "Invalid request: Content-Type must be application/json"}), 415
 
-     form_data = request.get_json()
-     if not form_data:
-          return jsonify({"success": False, "message": "Invalid request: No JSON data received."}), 400
+    form_data = request.get_json()
+    if not form_data:
+        return jsonify({"success": False, "message": "Invalid request: No JSON data received."}), 400
 
-     current_app.logger.info(f"Received JSON data for connection test: {form_data}") # Log received JSON
-     # *** END CHANGE ***
-     current_app.logger.info(f"Received form data for connection test: {form_data.to_dict()}")
-     # *** END ADDED LOGGING ***
+    current_app.logger.info(f"Testing connection for endpoint: '{form_data.get('name', 'TEMP')}', type: {form_data.get('type')}")
 
-     # --- Create temporary Endpoint object more reliably ---
-     endpoint_type = form_data.get('type') # Get type submitted (now from hidden field if editing)
-#     if not endpoint_type:
-#          return jsonify({"success": False, "message": "Endpoint type missing in submission."})
-     if not endpoint_type:
-          endpoint_type = 'oracle'
+    try:
+        endpoint_type = form_data.get('type')
+        temp_data = {
+            'id': None,
+            'name': form_data.get('name', 'TEMP'),
+            'type': endpoint_type,
+            'username': form_data.get('username'),
+            'password': form_data.get('password'),
+            'host': None,
+            'port': None,
+            'database': None,
+            'service_name': None,
+            'dataset': None,
+            'credentials_json': None
+        }
 
-     temp_data = {
-         'id': None, # Temporary object has no ID
-         'name': form_data.get('name', 'TEMP'), # Get name if available
-         'type': endpoint_type,
-         'username': form_data.get('username'),
-         'password': form_data.get('password'),
-         'host': None, 'port': None, 'service_name': None, 'database': None,
-         'dataset': None, 'credentials_json': None,
-         # Add other fields if needed by MetadataService._get_oracle_connection or _get_connection_string
-     }
+        # Populate type-specific fields
+        if endpoint_type == 'postgres':
+            temp_data.update({
+                'host': form_data.get('postgres_host'),
+                'port': form_data.get('postgres_port'),
+                'database': form_data.get('postgres_database')
+            })
+        elif endpoint_type == 'oracle':
+            temp_data.update({
+                'host': form_data.get('oracle_host'),
+                'port': form_data.get('oracle_port'),
+                'service_name': form_data.get('oracle_service_name')
+            })
+        # Add other types as needed
 
-     # Populate type-specific fields based on submitted type
-     if endpoint_type == 'oracle':
-         temp_data['host'] = form_data.get('oracle_host')
-         temp_data['port'] = form_data.get('oracle_port')
-         temp_data['service_name'] = form_data.get('oracle_service_name')
-         temp_data['type'] = 'oracle'
-     elif endpoint_type == 'postgres':
-         temp_data['host'] = form_data.get('postgres_host')
-         temp_data['port'] = form_data.get('postgres_port')
-         temp_data['database'] = form_data.get('postgres_database')
-     elif endpoint_type == 'mysql':
-         temp_data['host'] = form_data.get('mysql_host')
-         temp_data['port'] = form_data.get('mysql_port')
-         temp_data['database'] = form_data.get('mysql_database')
-     elif endpoint_type == 'bigquery':
-         temp_data['dataset'] = form_data.get('dataset')
-         temp_data['credentials_json'] = form_data.get('credentials_json')
-     # Add other types if supported
+        endpoint_temp = Endpoint(**temp_data)
+        success, message = MetadataService.test_connection(endpoint_temp)
+        return jsonify({"success": success, "message": message})
 
-     # Create the Endpoint object from the populated dictionary
-     endpoint_temp = Endpoint(**temp_data)
-     # --- End temporary Endpoint creation ---
-
-     # Log the data being passed to the service
-     current_app.logger.info(f"Testing connection with effective data: Type='{endpoint_temp.type}', Host='{endpoint_temp.host}', Port='{endpoint_temp.port}', User='{endpoint_temp.username}', Service='{endpoint_temp.service_name}', DB='{endpoint_temp.database}'")
-
-     try:
-         # Call the (now existing) test_connection method
-         success, message = MetadataService.test_connection(endpoint_temp)
-         return jsonify({"success": success, "message": message})
-     except Exception as e:
-         current_app.logger.error(f"Connection test failed unexpectedly: {e}", exc_info=True)
-         # Return the specific error message if possible
-         return jsonify({"success": False, "message": f"Connection test error: {str(e)}"})
+    except Exception as e:
+        current_app.logger.error(f"Connection test failed: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "message": f"Connection test error: {str(e)}"})

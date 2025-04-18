@@ -36,7 +36,7 @@
     </div>
     {% endif %}
 
-    <form id="endpointForm" method="POST" class="needs-validation" novalidate>
+    <form id="endpoint-form" method="POST" class="needs-validation" novalidate>
         {{ form.hidden_tag() }}
 
         <div class="card mb-4 shadow-sm">
@@ -72,9 +72,14 @@
                          {% if form.username.errors %} <div class="invalid-feedback">{{ form.username.errors[0] }}</div> {% endif %}
                     </div>
                     <div class="col-md-6 mb-3">
-                        {{ form.password.label(class="form-label") }}
-                        {{ form.password(class="form-control" + (" is-invalid" if form.password.errors else ""), type="password") }}
-                         {% if form.password.errors %} <div class="invalid-feedback">{{ form.password.errors[0] }}</div> {% endif %}
+                        <div class="input-group">
+                            {{ form.password.label(class="form-label") }}
+                            {{ form.password(class="form-control" + (" is-invalid" if form.password.errors else ""), type="password", id="password-field") }}
+                            <button class="btn btn-outline-secondary" type="button" id="toggle-password">
+                                <i class="bi bi-eye"></i>
+                            </button>
+                        </div>
+                        {% if form.password.errors %} <div class="invalid-feedback">{{ form.password.errors[0] }}</div> {% endif %}
                     </div>
                 </div>
              </div>
@@ -123,17 +128,17 @@
                 <div id="mysqlFields" class="database-fields">
                     <div class="row">
                          <div class="col-md-4 mb-3">
-                             <label for="mysql_host" class="form-label">MySQL Host</label>
-                             <input type="text" id="mysql_host" name="mysql_host" class="form-control" placeholder="e.g., localhost">
+                             {{ form.mysql_host.label(class="form-label") }}
+                             {{ form.mysql_host(class="form-control", placeholder="e.g., localhost") }}
                          </div>
                           <div class="col-md-4 mb-3">
-                             <label for="mysql_port" class="form-label">MySQL Port</label>
-                             <input type="number" id="mysql_port" name="mysql_port" class="form-control" placeholder="e.g., 3306">
-                             {# Add validation if needed #}
+                             {{ form.mysql_port.label(class="form-label") }}
+                             {{ form.mysql_port(class="form-control", placeholder="e.g., 3306") }}
+                             {% if form.mysql_port.errors %} <div class="invalid-feedback d-block">{{ form.mysql_port.errors[0] }}</div> {% endif %}
                          </div>
                           <div class="col-md-4 mb-3">
-                             <label for="mysql_database" class="form-label">MySQL Database</label>
-                             <input type="text" id="mysql_database" name="mysql_database" class="form-control" placeholder="e.g., inventory_db">
+                             {{ form.mysql_database.label(class="form-label") }}
+                             {{ form.mysql_database(class="form-control", placeholder="e.g., inventory_db") }}
                          </div>
                     </div>
                 </div>
@@ -165,15 +170,18 @@
               </div>
          </div>
 
+        {# --- Connection Test Results --- #}
+        <div class="alert alert-info d-none" id="connection-test-result">
+            <i class="bi bi-info-circle"></i> <span id="connection-test-message"></span>
+        </div>
 
         {# --- Actions --- #}
         <div class="mt-4">
             <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Create Endpoint</button>
-            <button type="button" class="btn btn-info ms-2" onclick="testConnection()"><i class="bi bi-plug"></i> Test Connection</button>
+            <button type="button" class="btn btn-info ms-2" id="test-connection-btn"><i class="bi bi-plug"></i> Test Connection</button>
             <a href="{{ url_for('web.list_endpoints') }}" class="btn btn-secondary ms-2">Cancel</a>
         </div>
     </form>
-</div>
 
 {% endblock %}
 
@@ -187,8 +195,6 @@ function updateFormFields() {
         // Disable fields within hidden divs so they aren't submitted
         div.querySelectorAll('input, textarea, select').forEach(field => {
             field.disabled = true;
-            // Clear values maybe? Optional.
-            // if (field.type !== 'hidden') field.value = '';
         });
     });
 
@@ -201,7 +207,6 @@ function updateFormFields() {
             field.disabled = false;
         });
     }
-     // Call toggleTargetSchema as well, as endpoint type might affect it
     toggleTargetSchema();
 }
 
@@ -212,94 +217,98 @@ function toggleTargetSchema() {
 
     if (endpointTypeField.value === 'target') {
         targetSchemaGroup.style.display = 'block';
-        targetSchemaInput.disabled = false; // Enable input when shown
+        targetSchemaInput.disabled = false;
     } else {
         targetSchemaGroup.style.display = 'none';
-        targetSchemaInput.disabled = true; // Disable input when hidden
-        targetSchemaInput.value = ''; // Clear value when hidden
+        targetSchemaInput.disabled = true;
+        targetSchemaInput.value = '';
     }
 }
 
 // Function to test connection
 async function testConnection() {
-    const testButton = event.target;
+    const testButton = document.getElementById('test-connection-btn');
     const originalButtonText = testButton.innerHTML;
     testButton.disabled = true;
     testButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Testing...';
 
-    const form = document.getElementById('endpoint-form'); // Ensure form has id="endpoint-form"
+    const form = document.getElementById('endpoint-form');
+    const resultDiv = document.getElementById('connection-test-result');
+    const messageSpan = document.getElementById('connection-test-message');
 
-    // --- Manually gather data into a JS object ---
-    const dataToSend = {
-        // Always include type (read from hidden field in edit, select in create)
-        type: form.querySelector('input[name="type"]')
-//        type: form.elements['type']?.value || '', // Use hidden field name="type"
-        name: form.elements['name']?.value || '',
-        endpoint_type: form.elements['endpoint_type']?.value || '', // Include if needed by test logic (currently not)
-        username: form.elements['username']?.value || '',
-        password: form.elements['password']?.value || '', // Send password for test
-        target_schema: form.elements['target_schema']?.value || '',
+    // Gather all form data as JSON
+    const formData = new FormData(form);
+    const dataToSend = {};
+    formData.forEach((value, key) => {
+        dataToSend[key] = value;
+    });
 
-        // Include all possible type-specific fields
-        // Use optional chaining (?.) and nullish coalescing (?? '')
-        postgres_host: form.elements['postgres_host']?.value ?? '',
-        postgres_port: form.elements['postgres_port']?.value ?? '',
-        postgres_database: form.elements['postgres_database']?.value ?? '',
-        oracle_host: form.elements['oracle_host']?.value ?? '',
-        oracle_port: form.elements['oracle_port']?.value ?? '',
-        oracle_service_name: form.elements['oracle_service_name']?.value ?? '',
-        mysql_host: form.elements['mysql_host']?.value ?? '',
-        mysql_port: form.elements['mysql_port']?.value ?? '',
-        mysql_database: form.elements['mysql_database']?.value ?? '',
-        dataset: form.elements['dataset']?.value ?? '',
-        credentials_json: form.elements['credentials_json']?.value ?? ''
-    };
-    // --- End gathering data ---
-
-    console.log("--- Data being sent for connection test (JSON): ---");
-    // Avoid logging full password in console
-    let logData = {...dataToSend};
-    if (logData.password) { logData.password = '********'; }
-    console.log(logData);
-    console.log("--------------------------------------------------");
-
+    // Add CSRF token
+    dataToSend['csrf_token'] = document.querySelector('input[name="csrf_token"]').value;
 
     try {
         const response = await fetch("{{ url_for('web.test_connection') }}", {
             method: 'POST',
-            // *** Set Headers and Body for JSON ***
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
-                // Add CSRF token header here if your form uses Flask-WTF CSRF protection
-                // 'X-CSRFToken': form.elements['csrf_token']?.value || ''
             },
-            body: JSON.stringify(dataToSend) // Send JSON string
-            // *** End JSON Headers/Body ***
+            body: JSON.stringify(dataToSend)
         });
-        const result = await response.json(); // Expect JSON response
-        alert(result.success ? '✅ Connection successful!' : '❌ Connection failed: ' + result.message);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+            resultDiv.className = 'alert alert-success';
+            messageSpan.innerHTML = '<strong>✅ Connection successful!</strong> ' + (result.message || '');
+        } else {
+            resultDiv.className = 'alert alert-danger';
+            messageSpan.innerHTML = '<strong>❌ Connection failed:</strong> ' + (result.message || 'Unknown error');
+        }
+        resultDiv.classList.remove('d-none');
+
     } catch (error) {
         console.error("Connection test error:", error);
-        alert('⚠️ Error during connection test: ' + error.message);
+        resultDiv.className = 'alert alert-danger';
+        messageSpan.innerHTML = '<strong>⚠️ Error during connection test:</strong> ' + error.message;
+        resultDiv.classList.remove('d-none');
     } finally {
-         testButton.disabled = false;
-         testButton.innerHTML = originalButtonText;
+        testButton.disabled = false;
+        testButton.innerHTML = originalButtonText;
+    }
+}
+// Password visibility toggle
+function togglePasswordVisibility() {
+    const passwordField = document.getElementById('password-field');
+    const toggleButton = document.getElementById('toggle-password');
+
+    if (passwordField.type === 'password') {
+        passwordField.type = 'text';
+        toggleButton.innerHTML = '<i class="bi bi-eye-slash"></i>';
+    } else {
+        passwordField.type = 'password';
+        toggleButton.innerHTML = '<i class="bi bi-eye"></i>';
     }
 }
 
-
 // Initialize form fields and target schema visibility on page load
 document.addEventListener('DOMContentLoaded', function() {
-    updateFormFields(); // Initialize based on default type selection
-    toggleTargetSchema(); // Initialize based on default endpoint type selection
+    updateFormFields();
+    toggleTargetSchema();
+
+    // Set up event listeners
+    document.getElementById('test-connection-btn').addEventListener('click', testConnection);
+    document.getElementById('toggle-password').addEventListener('click', togglePasswordVisibility);
 });
 
 </script>
 
 <style>
-/* Keep database-fields hidden by default */
 .database-fields { display: none; }
-/* Add other styles if needed */
+#connection-test-result { transition: all 0.3s ease; }
 </style>
 {% endblock %}

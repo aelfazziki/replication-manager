@@ -2,6 +2,9 @@ from collections import defaultdict
 
 import cx_Oracle
 from sqlalchemy import create_engine, inspect, text
+#from sqlalchemy.dialects.postgresql import psycopg2
+import psycopg2  # Add this import at the top of the file
+from psycopg2 import OperationalError  # Specific error for connection issues
 from sqlalchemy.exc import SQLAlchemyError
 from google.cloud import bigquery
 
@@ -54,6 +57,25 @@ class MetadataService:
             current_app.logger.error(f"Unexpected error connecting to Oracle endpoint ID: {endpoint_id_log} ('{endpoint.name}'): {e}", exc_info=True)
             raise
 
+    @staticmethod
+    def _get_postgres_connection_string(endpoint, schema_name=None):
+        """Generate PostgreSQL connection string."""
+        conn_params = {
+            'host': endpoint.host,
+            'port': endpoint.port,
+            'dbname': endpoint.database,
+            'user': endpoint.username
+        }
+
+        if endpoint.password:
+            conn_params['password'] = endpoint.password
+
+        if schema_name:
+            conn_params['options'] = f'-c search_path={schema_name}'
+
+        # Convert to connection string format
+        return ' '.join([f"{k}='{v}'" for k, v in conn_params.items()])
+
     # === Connection Testing ===
     @staticmethod
     def test_connection(endpoint: Endpoint) -> Tuple[bool, str]:
@@ -63,8 +85,24 @@ class MetadataService:
         """
         endpoint_id_log = endpoint.id if endpoint.id else 'TEMP'
         current_app.logger.info(f"Testing connection for endpoint: '{endpoint.name}' (ID: {endpoint_id_log}), type: {endpoint.type}, host: {endpoint.host}")
+        if endpoint.type == 'postgres':
+            # For PostgreSQL, schema_name is optional for connection testing
+            conn_str = MetadataService._get_postgres_connection_string(endpoint, schema_name=None)
+            current_app.logger.info(f"Testing PostgreSQL connection with: {conn_str}")
 
-        if endpoint.type == 'oracle':
+            # Try to connect
+            conn = None
+            try:
+                conn = psycopg2.connect(conn_str)
+                if conn:
+                    conn.close()
+                    return True, "PostgreSQL connection successful"
+            except OperationalError as e:
+                return False, f"PostgreSQL connection failed: {str(e)}"
+            except Exception as e:
+                return False, f"PostgreSQL connection error: {str(e)}"
+
+        elif endpoint.type == 'oracle':
             conn = None
             try:
                 conn = MetadataService._get_oracle_connection(endpoint)
