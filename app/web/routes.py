@@ -256,7 +256,9 @@ def edit_task(task_id):
     if not task:
         abort(404)
     form = TaskForm(obj=task) # Pre-populate form
-
+    # Make sure to pass the tables as JSON string
+    tables_json_val = json.dumps(task.tables or [])
+    current_app.logger.info(f"Editing task {task_id}, tables: {task.tables}")
     # Populate endpoint choices
     endpoints = Endpoint.query.order_by(Endpoint.name).all()
     form.source.choices = [(e.id, f"{e.name} ({e.type})") for e in endpoints if e.endpoint_type == 'source']

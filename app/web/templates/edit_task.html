@@ -152,55 +152,44 @@
     // Copy the entire JavaScript block from create_task.html here
     // It handles loading tables, selection, filtering, and updating the hidden input.
     // It reads the initial selected tables from the hidden input populated by the route.
-    const sourceSelect = document.getElementById('source');
-    const schemaListDiv = document.getElementById('schema-list');
-    const schemaLoadingDiv = document.getElementById('schema-loading');
-    const selectedListDiv = document.getElementById('selected-list');
-    const selectedPlaceholder = document.getElementById('selected-placeholder');
-    const selectedCountSpan = document.getElementById('selected-count');
-    const hiddenSelectedInput = document.getElementById('selected-tables');
-    const schemaSearchInput = document.getElementById('schema-search');
-    const selectedSearchInput = document.getElementById('selected-search');
+// Change from const to let for variables that need reassignment
+let schemaLoadingDiv = document.getElementById('schema-loading');
+let selectedPlaceholder = document.getElementById('selected-placeholder');
 
+// Keep other variables as const since they don't need reassignment
+const sourceSelect = document.getElementById('source');
+const schemaListDiv = document.getElementById('schema-list');
+const selectedListDiv = document.getElementById('selected-list');
+const selectedCountSpan = document.getElementById('selected-count');
+const hiddenSelectedInput = document.getElementById('selected-tables');
+const schemaSearchInput = document.getElementById('schema-search');
+const selectedSearchInput = document.getElementById('selected-search');
     let selectedTables = new Set(); // Store selected tables as "schema.table"
 
     // Function to load tables for selected endpoint
-    async function loadTablesForSource() {
+async function loadTablesForSource() {
+    try {
         const endpointId = sourceSelect.value;
         if (!endpointId) {
             schemaListDiv.innerHTML = '<div class="text-center text-muted p-3" id="schema-loading">Select source endpoint to load tables...</div>';
-            schemaLoadingDiv = document.getElementById('schema-loading'); // Re-select if cleared
+            schemaLoadingDiv = document.getElementById('schema-loading');
             return;
         }
 
         schemaListDiv.innerHTML = '<div class="text-center text-muted p-3" id="schema-loading"><div class="spinner-border spinner-border-sm" role="status"></div> Loading tables...</div>';
-        schemaLoadingDiv = document.getElementById('schema-loading'); // Re-select if cleared
+        schemaLoadingDiv = document.getElementById('schema-loading');
 
-        try {
-            const response = await fetch(`/api/endpoints/${endpointId}/tables`);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const tablesData = await response.json();
+        const response = await fetch(`/api/endpoints/${endpointId}/tables`);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-            // Group tables by schema
-            const schemas = tablesData.reduce((acc, table) => {
-                const schema = table.schema || 'default'; // Handle tables without explicit schema
-                if (!acc[schema]) {
-                    acc[schema] = [];
-                }
-                acc[schema].push(table.table);
-                return acc;
-            }, {});
+        const tablesData = await response.json();
+        renderSchemaList(tablesData);
 
-            renderSchemaList(schemas);
-
-        } catch (error) {
-            console.error('Error fetching tables:', error);
-            schemaListDiv.innerHTML = `<div class="alert alert-danger small">Error loading tables: ${error.message}</div>`;
-            schemaLoadingDiv = null;
-        }
+    } catch (error) {
+        console.error('Error loading tables:', error);
+        schemaListDiv.innerHTML = `<div class="alert alert-danger small">Error loading tables: ${error.message}</div>`;
     }
+}
 
     // Function to render the schema list
     function renderSchemaList(schemas) {
@@ -362,30 +351,30 @@
     selectedSearchInput.addEventListener('keyup', filterSelected);
 
     // --- INITIALIZATION for Edit Page ---
-    function initializeEditPage() {
-        // 1. Initialize selectedTables Set from hidden input
-        try {
-             const initialSelected = JSON.parse(hiddenSelectedInput.value || '[]');
-             // Clear set before populating
-             selectedTables.clear();
-             initialSelected.forEach(item => selectedTables.add(`${item.schema}.${item.table}`));
-         } catch (e) {
-             console.error("Error parsing initial selected tables:", e);
-             selectedTables.clear(); // Reset if parsing fails
-         }
+// In the initializeEditPage function:
+function initializeEditPage() {
+    console.log("Initializing edit page...");
 
-        // 2. Update the displayed selected list
-        updateSelectedList();
+    // 1. Initialize selectedTables Set from hidden input
+    try {
+        console.log("Hidden input value:", hiddenSelectedInput.value);
+        const initialSelected = JSON.parse(hiddenSelectedInput.value || '[]');
+        console.log("Parsed initial selected:", initialSelected);
 
-        // 3. Load tables for the initially selected source endpoint
-        if (sourceSelect.value) {
-            loadTablesForSource(); // This will render the source list and highlight selected items
-        } else {
-             schemaListDiv.innerHTML = '<div class="text-center text-muted p-3" id="schema-loading">Select source endpoint to load tables...</div>';
-             schemaLoadingDiv = document.getElementById('schema-loading');
-        }
+        selectedTables.clear();
+        initialSelected.forEach(item => {
+            if (item.schema && item.table) {
+                selectedTables.add(`${item.schema}.${item.table}`);
+            }
+        });
+        console.log("Selected tables initialized:", Array.from(selectedTables));
+    } catch (e) {
+        console.error("Error parsing initial selected tables:", e);
+        selectedTables.clear();
     }
 
+    // Rest of your code...
+}
     // Run initialization when the DOM is ready
     document.addEventListener('DOMContentLoaded', initializeEditPage);
 

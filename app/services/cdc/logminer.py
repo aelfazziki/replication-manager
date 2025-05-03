@@ -1,17 +1,42 @@
 # logminer.py (Refactored)
 
-import cx_Oracle
+import time  # Add this import at the top with other imports
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Generator # Added Generator
 
 # Assuming interfaces.py is in the same directory or adjust import path
 from app.interfaces import SourceConnector
 
+import oracledb as cx_Oracle
+# Print the version being used
+print(f"Using oracledb version: {cx_Oracle.__version__}")
+
 # Placeholder - remove if psycopg2 is not needed here anymore
 # import psycopg2
 # *** Add logging import ***
 import logging
 logger = logging.getLogger(__name__) # Use standard Python logging
+
+# LogMiner options compatibility layer
+try:
+    # New oracledb (>= 1.0) constant names
+    LOGMINER_DICT_FROM_ONLINE_CATALOG = cx_Oracle.LOGMINER_DICT_FROM_ONLINE_CATALOG
+    LOGMINER_COMMITTED_DATA_ONLY = cx_Oracle.LOGMINER_COMMITTED_DATA_ONLY
+    LOGMINER_PRINT_PRETTY_SQL = cx_Oracle.LOGMINER_PRINT_PRETTY_SQL
+    LOGMINER_CONTINUOUS_MINE = cx_Oracle.LOGMINER_CONTINUOUS_MINE
+except AttributeError:
+    try:
+        # Old cx_Oracle constant names
+        LOGMINER_DICT_FROM_ONLINE_CATALOG = cx_Oracle.STARTLOGMNR_DICT_FROM_ONLINE_CATALOG
+        LOGMINER_COMMITTED_DATA_ONLY = cx_Oracle.STARTLOGMNR_COMMITTED_DATA_ONLY
+        LOGMINER_PRINT_PRETTY_SQL = cx_Oracle.STARTLOGMNR_PRINT_PRETTY_SQL
+        LOGMINER_CONTINUOUS_MINE = cx_Oracle.STARTLOGMNR_CONTINUOUS_MINE
+    except AttributeError:
+        # Fallback to raw values if neither works
+        LOGMINER_DICT_FROM_ONLINE_CATALOG = 8
+        LOGMINER_COMMITTED_DATA_ONLY = 1
+        LOGMINER_PRINT_PRETTY_SQL = 4
+        LOGMINER_CONTINUOUS_MINE = 2
 
 class OracleLogMinerConnector(SourceConnector):
     """
@@ -23,33 +48,49 @@ class OracleLogMinerConnector(SourceConnector):
         self.conn: Optional[cx_Oracle.Connection] = None
         self.config: Dict[str, Any] = {}
         self._logminer_started: bool = False
+        self.logger = logging.getLogger(__name__)  # Add this line
 
     def connect(self, config: Dict[str, Any]) -> None:
-        """Establish connection to Oracle."""
+        """Establish connection to Oracle XE."""
         if self.conn:
-            self.disconnect() # Ensure any existing connection is closed
+            self.disconnect()
 
         self.config = config
         try:
-            # Ensure port is an integer if present
             port = int(config.get('port', 1521))
             dsn = cx_Oracle.makedsn(
                 config['host'],
                 port,
-                service_name=config.get('service_name') # Use get for optional service_name
-                # Consider adding SID support if needed: sid=config.get('sid')
+                service_name=config.get('service_name', 'XEPDB1')
             )
-            # Consider connection pooling for efficiency in a real application
+            logger.info(f"Connect : user :{config['username']},service_name :{config['service_name']}  to Oracle XE database")
+#            self.conn = cx_Oracle.connect(
+#                user=config['username'],
+#                password=config['password'],
+#                dsn=dsn,
+#                mode=cx_Oracle.SYSDBA
+#            )
             self.conn = cx_Oracle.connect(
-                user=config['username'],
-                password=config['password'],
-                dsn=dsn
+                user="C##REP_USER",
+                password="rep_user",
+                dsn=dsn,
+                mode=cx_Oracle.SYSDBA
             )
-            self.conn.autocommit = False # Important for controlling transactions
-            print("Successfully connected to Oracle.") # Replace with proper logging
+
+            self.conn.autocommit = False
+            logger.info("Connected to Oracle XE database")
+            # Set container context immediately after connecting
+#            with self.conn.cursor() as cursor:
+#                try:
+#                    cursor.execute("ALTER SESSION SET CONTAINER = CDB$ROOT")
+#                    logger.info("Connected to Oracle XE in CDB mode")
+#                except cx_Oracle.DatabaseError as e:
+#                    logger.warning("Could not set CDB$ROOT container (non-CDB mode?)")
+#                    # Continue with regular connection if not in CDB mode
+
         except cx_Oracle.Error as e:
-            print(f"Error connecting to Oracle: {e}") # Replace with proper logging
-            raise # Re-raise the exception to signal failure
+            logger.error(f"Connection failed: {e}")
+            raise
 
     def disconnect(self) -> None:
         """Disconnect from Oracle."""
@@ -72,170 +113,341 @@ class OracleLogMinerConnector(SourceConnector):
                 self.conn = None
                 self.config = {}
 ##############################################################################################
-    def _add_logfiles(self, start_scn: Optional[int] = None):
-        """Improved logfile handling with PDB awareness"""
-        cursor = self.conn.cursor()
+    def _add_logfiles(self, start_scn: int, end_scn: int) -> bool:
+        """Add both archived and online logs containing the SCN range."""
+        if not self.conn:
+            return False
+
         try:
-            # Check if we're in a PDB
-            cursor.execute("SELECT CDB FROM V$DATABASE")
-            is_cdb = cursor.fetchone()[0] == 'YES'
+            with self.conn.cursor() as cursor:
+                archived_added = self._add_archived_logs(cursor, start_scn, end_scn)
+                online_added = self._add_online_logs(cursor, start_scn, end_scn)
 
-            # Add archived logs first
-            archived_added = self._add_archived_logs(cursor, start_scn)
+                # If no logs found, try forcing archive log generation
+                if archived_added + online_added == 0:
+                    self.logger.warning("No logs found for SCN range, forcing archive log generation")
+                    self.force_log_switch()
+                    time.sleep(2)  # Give time for archiving to complete
+                    archived_added = self._add_archived_logs(cursor, start_scn, end_scn)
+                    online_added = self._add_online_logs(cursor, start_scn, end_scn)
 
-            # Carefully add online logs if not in PDB
-            if not is_cdb and start_scn:
-                self._add_online_logs(cursor, start_scn)
+                self.logger.info(
+                    f"Total logs added: {archived_added + online_added} "
+                    f"(archived: {archived_added}, online: {online_added})"
+                )
+                return (archived_added + online_added) > 0
 
-            return archived_added > 0
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error adding log files: {e}")
+            return False
 
-        finally:
-            cursor.close()
+    # Add new method for PDB log handling
+    def _add_pdb_logs(self, cursor, start_scn) -> int:
+        """Add logs in a PDB environment using CDB-level views."""
+        logs_added = 0
 
-    def _add_archived_logs(self, cursor, start_scn):
-        """Helper to add archived logs"""
-        query = """
-            SELECT name, first_change#, next_change#
-            FROM v$archived_log
-            WHERE :scn BETWEEN first_change# AND next_change#
-               OR next_change# > :scn
-            ORDER BY first_change#
-        """
-        cursor.execute(query, scn=start_scn or 0)
-        # ... (rest of archive log handling)
-        logs_added_count = 0
         try:
-            cursor.execute(query, scn=start_scn)
-            archived_logs = [row[0] for row in cursor.fetchall()]
-            logger.info(
-                f"[LogMiner] Found {len(archived_logs)} potentially relevant archived logs based on SCN {start_scn}.")
-
-            if not archived_logs:
-                logger.warning(
-                    f"[LogMiner] No relevant ARCHIVED logs found containing or after SCN {start_scn}. LogMiner might fail if no changes occurred or logs aren't available.")
-
-            for log_file in archived_logs:
-                try:
-                    logger.debug(f"[LogMiner] Attempting to add archived log: {log_file}")
-                    add_option = 2 if logs_added_count > 0 else 1  # Use ADDFILE(2) if not the first log, otherwise NEW(1)
-                    cursor.execute("BEGIN DBMS_LOGMNR.ADD_LOGFILE(:log_name, :add_opt); END;", log_name=log_file,
-                                   add_opt=add_option)
-                    logs_added_count += 1
-                    logger.info(f"[LogMiner] Successfully added archived log: {log_file}")
-                except cx_Oracle.DatabaseError as add_err:
-                    error_obj, = add_err.args
-                    if error_obj.code == 1289:  # ORA-01289: cannot add duplicate logfile
-                        logger.warning(f"[LogMiner] Archived log already added (ORA-01289): {log_file}")
-                        # Don't increment logs_added_count again if duplicate error
-                    elif error_obj.code == 1284:  # ORA-01284: file string cannot be opened
-                        logger.error(
-                            f"[LogMiner] Cannot open archived log file (ORA-01284): {log_file}. Check file existence and permissions.",
-                            exc_info=True)
-                    elif error_obj.code == 1291:  # ORA-01291: missing logfile
-                        logger.error(
-                            f"[LogMiner] Oracle reports missing archived log file (ORA-01291): {log_file}. Check registration and physical file.",
-                            exc_info=True)
-                    else:
-                        logger.error(f"[LogMiner] Error adding archived log {log_file}: {add_err}", exc_info=True)
-
-        except cx_Oracle.Error as query_err:
-            logger.error(f"[LogMiner] Error querying V$ARCHIVED_LOG: {query_err}", exc_info=True)
-
-    def _add_online_logs(self, cursor, start_scn):
-        """Attempt to add online logs with PDB check"""
-        try:
+            # Query CDB-level archived logs filtered by current PDB's CON_ID
             cursor.execute("""
-                SELECT GROUP#, STATUS, FIRST_CHANGE#, NEXT_CHANGE#
-                FROM V$LOG 
-                WHERE STATUS IN ('CURRENT','ACTIVE')
-                  AND NEXT_CHANGE# > :scn
-                ORDER BY FIRST_CHANGE#
-            """, scn=start_scn)
-            # Add logs using DBMS_LOGMNR.ADD_LOGFILE
-        except cx_Oracle.DatabaseError as e:
-            if e.args[0].code == 65040:  # PDB restriction
-                logger.warning("Skipping online logs in PDB environment")
-            else:
-                raise
+                SELECT name, first_change#, next_change#
+                FROM CDB_ARCHIVED_LOG
+                WHERE :scn BETWEEN first_change# AND next_change#
+                   OR next_change# > :scn
+                   AND con_id = SYS_CONTEXT('USERENV', 'CON_ID')
+                   AND name IS NOT NULL
+                ORDER BY first_change#
+            """, {'scn': start_scn})
 
-#    def _add_logfiles(self, start_scn: Optional[int] = None):
-#        """Adds necessary archived redo logs to the LogMiner session. Skips online logs."""
-#        if not self.conn:
-#            raise ConnectionError("Oracle connection not established.")
-#
-#        cursor = self.conn.cursor()
-#        logs_added_count = 0
-#
-#        # --- SKIP Adding Online Redo Logs ---
-#        logger.warning("[LogMiner] Skipping addition of online redo logs due to potential PDB restrictions (ORA-65040). Relying on archived logs.")
-#        # --- End Skip ---
-#
-#        # Add Archived Redo Logs (if start_scn provided or starting fresh)
-#        if start_scn is None:
-#            # If starting fresh (no last_position), get current SCN
-#            start_scn = self.get_current_scn()
-#            logger.info(f"[LogMiner] No start SCN provided, using current SCN: {start_scn}")
-#
-#        if start_scn:
-#            logger.info(f"[LogMiner] Querying archived logs (V$ARCHIVED_LOG) covering or after SCN: {start_scn}...")
-#            # Refined Query: Find logs containing the start SCN or any log after it.
-#            # Requires logs to be registered correctly.
-#            query = """
-#                SELECT name
-#                FROM v$archived_log
-#                WHERE :scn < next_change# AND next_change# > 0 -- Log ends after start SCN (next_change#=0 means current online log)
-#                   OR :scn BETWEEN first_change# AND next_change# -- Log contains the start SCN
-#                ORDER BY sequence# ASC
-#            """
-#            try:
-#                 cursor.execute(query, scn=start_scn)
-#                 archived_logs = [row[0] for row in cursor.fetchall()]
-#                 logger.info(f"[LogMiner] Found {len(archived_logs)} potentially relevant archived logs based on SCN {start_scn}.")
-#
-#                 if not archived_logs:
-#                     logger.warning(f"[LogMiner] No relevant ARCHIVED logs found containing or after SCN {start_scn}. LogMiner might fail if no changes occurred or logs aren't available.")
-#
-#                 for log_file in archived_logs:
-#                    try:
-#                        logger.debug(f"[LogMiner] Attempting to add archived log: {log_file}")
-#                        add_option = 2 if logs_added_count > 0 else 1 # Use ADDFILE(2) if not the first log, otherwise NEW(1)
-#                        cursor.execute("BEGIN DBMS_LOGMNR.ADD_LOGFILE(:log_name, :add_opt); END;", log_name=log_file, add_opt=add_option)
-#                        logs_added_count += 1
-#                        logger.info(f"[LogMiner] Successfully added archived log: {log_file}")
-#                    except cx_Oracle.DatabaseError as add_err:
-#                        error_obj, = add_err.args
-#                        if error_obj.code == 1289: # ORA-01289: cannot add duplicate logfile
-#                            logger.warning(f"[LogMiner] Archived log already added (ORA-01289): {log_file}")
-#                            # Don't increment logs_added_count again if duplicate error
-#                        elif error_obj.code == 1284: # ORA-01284: file string cannot be opened
-#                            logger.error(f"[LogMiner] Cannot open archived log file (ORA-01284): {log_file}. Check file existence and permissions.", exc_info=True)
-#                        elif error_obj.code == 1291: # ORA-01291: missing logfile
-#                             logger.error(f"[LogMiner] Oracle reports missing archived log file (ORA-01291): {log_file}. Check registration and physical file.", exc_info=True)
-#                        else:
-#                            logger.error(f"[LogMiner] Error adding archived log {log_file}: {add_err}", exc_info=True)
-#
-#            except cx_Oracle.Error as query_err:
-#                 logger.error(f"[LogMiner] Error querying V$ARCHIVED_LOG: {query_err}", exc_info=True)
-#        else:
-#             logger.warning("[LogMiner] start_scn is None, cannot query relevant archived logs.")
-#
-#
-#        cursor.close()
- #       # *** MODIFY THIS PART ***
- #       if logs_added_count == 0:
- #            if start_scn is not None:
- #                logger.warning(f"[LogMiner] No new archived logs found covering or after SCN {start_scn}. LogMiner will not start this cycle.")
- #                # Return False or None to indicate no logs were added/session shouldn't start
- #                return False
- #            else:
- #                logger.error("[LogMiner] No log files could be added to the session (start SCN was None)! Cannot start LogMiner.")
- #                raise Exception("LogMiner failed: No log files could be added.")
- #       else:
- #            logger.info(f"[LogMiner] Successfully added {logs_added_count} archived log file(s) in total.")
- #            return True # Indicate logs were successfully added
- #       # *** END MODIFICATION ***
+            for log_file, first_scn, next_scn in cursor:
+                try:
+                    add_option = 2 if logs_added > 0 else 1
+                    # Use CDB-level path mapping
+                    cursor.execute(
+                        "BEGIN DBMS_LOGMNR.ADD_LOGFILE(:log_name, :add_opt); END;",
+                        {'log_name': log_file.replace('CDB$ROOT/', ''),  # Adjust path if needed
+                         'add_opt': add_option}
+                    )
+                    logs_added += 1
+                    self.logger.info(f"Added PDB archived log: {log_file}")
+                except cx_Oracle.DatabaseError as e:
+                    if e.args[0].code != 1289:  # Ignore "already added" errors
+                        raise
 
-    def _start_logminer_session(self, start_scn: Optional[int] = None):
+            return logs_added
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error querying CDB_ARCHIVED_LOG: {e}")
+            return 0
+
+    def _add_archived_logs(self, cursor, start_scn: int, end_scn: int) -> int:
+        """Add archived logs containing the SCN range."""
+        logs_added = 0
+        try:
+            # First try with exact SCN range matching
+            query = """
+                SELECT name, first_change#, next_change#
+                FROM v$archived_log
+                WHERE ((:start_scn BETWEEN first_change# AND next_change#)
+                   OR (:end_scn BETWEEN first_change# AND next_change#)
+                   OR (first_change# BETWEEN :start_scn AND :end_scn)
+                   OR (next_change# BETWEEN :start_scn AND :end_scn))
+                   AND name IS NOT NULL
+                   AND status = 'A'
+                   AND deleted = 'NO'
+                ORDER BY first_change#
+            """
+
+            # Execute with explicit output type handling
+            cursor.execute(query, {'start_scn': start_scn, 'end_scn': end_scn})
+
+            # Check if we got results
+            if cursor.rowcount == 0:
+                # Fallback to broader query
+                query = """
+                    SELECT name, first_change#, next_change#
+                    FROM v$archived_log
+                    WHERE next_change# >= :start_scn
+                    AND name IS NOT NULL
+                    AND status = 'A'
+                    AND deleted = 'NO'
+                    ORDER BY first_change#
+                """
+                cursor.execute(query, {'start_scn': start_scn})
+
+            # Process results
+            while True:
+                row = cursor.fetchone()
+                if not row:
+                    break
+
+                log_file, first_scn, next_scn = row
+                try:
+                    add_option = 2 if logs_added > 0 else 1
+                    cursor.execute(
+                        "BEGIN DBMS_LOGMNR.ADD_LOGFILE(:log_name, :add_opt); END;",
+                        {'log_name': log_file, 'add_opt': add_option}
+                    )
+                    logs_added += 1
+                    self.logger.info(f"Added archived log: {log_file} (SCN range: {first_scn}-{next_scn})")
+                except cx_Oracle.DatabaseError as e:
+                    if e.args[0].code != 1289:  # Ignore "already added" errors
+                        raise
+
+            return logs_added
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error querying V$ARCHIVED_LOG: {e}", exc_info=True)
+            return 0
+
+    def _add_online_logs(self, cursor, start_scn: int, end_scn: int) -> int:
+        """Add online redo logs that may contain the SCN range."""
+        logs_added = 0
+        max_valid_scn = 2 ** 48  # Reasonable upper bound for SCN values
+
+        try:
+            # Get all online logs that might contain our SCN range
+            cursor.execute("""
+                SELECT group#, sequence#, status, first_change#, next_change#
+                FROM v$log 
+                WHERE status IN ('CURRENT','ACTIVE','UNUSED')
+                AND first_change# < next_change#
+                AND ((:start_scn BETWEEN first_change# AND next_change#)
+                    OR (:end_scn BETWEEN first_change# AND next_change#)
+                    OR (first_change# BETWEEN :start_scn AND :end_scn)
+                    OR (next_change# BETWEEN :start_scn AND :end_scn))
+                ORDER BY first_change#
+            """, {'start_scn': start_scn, 'end_scn': end_scn})
+
+            for group_id, seq, status, first_scn, next_scn in cursor:
+                # Skip logs with invalid SCN ranges
+                if next_scn >= max_valid_scn:
+                    self.logger.warning(
+                        f"Skipping log group {group_id} with invalid SCN range: {first_scn}-{next_scn}"
+                    )
+                    continue
+
+                try:
+                    # Get log file members for this group
+                    cursor.execute("""
+                        SELECT member FROM v$logfile 
+                        WHERE group# = :group_id
+                        AND type = 'ONLINE'
+                        AND status = 'VALID'
+                    """, {'group_id': group_id})
+
+                    for (log_file,) in cursor:
+                        try:
+                            add_option = 2 if logs_added > 0 else 1
+                            cursor.execute(
+                                "BEGIN DBMS_LOGMNR.ADD_LOGFILE(:log_name, :add_opt); END;",
+                                {'log_name': log_file, 'add_opt': add_option}
+                            )
+                            logs_added += 1
+                            self.logger.info(
+                                f"Added online log: {log_file} "
+                                f"(group {group_id}, seq {seq}, status {status}, SCN range: {first_scn}-{next_scn})"
+                            )
+                        except cx_Oracle.DatabaseError as e:
+                            if e.args[0].code != 1289:  # Ignore "already added" errors
+                                raise
+                except cx_Oracle.Error as e:
+                    self.logger.error(f"Error processing log group {group_id}: {e}")
+                    continue
+
+            return logs_added
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error querying online logs: {e}")
+            return 0
+
+    def force_log_switch(self):
+        """Force a log switch to ensure changes are archived."""
+        if not self.conn:
+            return False
+
+        try:
+            with self.conn.cursor() as cursor:
+                # First try in current container context
+                try:
+                    cursor.execute("ALTER SYSTEM ARCHIVE LOG CURRENT")
+                    self.logger.info("Forced archive log generation in current context")
+                    return True
+                except cx_Oracle.DatabaseError as e:
+                    self.logger.warning(f"Could not force log switch in current context: {e}")
+
+                # If that fails, try switching to CDB$ROOT
+                try:
+                    cursor.execute("ALTER SESSION SET CONTAINER = CDB$ROOT")
+                    cursor.execute("ALTER SYSTEM ARCHIVE LOG CURRENT")
+                    self.logger.info("Forced archive log generation in CDB$ROOT")
+                    return True
+                except cx_Oracle.DatabaseError as e:
+                    self.logger.error(f"Could not force log switch in CDB$ROOT: {e}")
+                    return False
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error forcing log switch: {e}")
+            return False
+
+    # Update _start_logminer_session to handle CDB/PDB context
+    def _start_logminer_session(self, start_scn: int) -> bool:
+        """Start LogMiner with CDB awareness"""
+        if not self.conn:
+            return False
+
+        try:
+            with self.conn.cursor() as cursor:
+                # Get current SCN to use as end point
+                cursor.execute("SELECT current_scn FROM v$database")
+                current_scn = cursor.fetchone()[0]
+
+                # Validate SCN range
+                if not self._validate_scn_range(start_scn):
+                    self.logger.warning(f"Using current SCN {current_scn} instead of {start_scn}")
+                    start_scn = current_scn
+
+                if not self.validate_logminer_privileges():
+                    raise RuntimeError("Missing required LogMiner privileges")
+
+                # Log current log status for debugging
+                self._log_available_logs()
+
+                # Try adding logs multiple times if needed
+                max_attempts = 3
+                for attempt in range(max_attempts):
+                    if self._add_logfiles(start_scn, current_scn):
+                        if self._verify_log_files(cursor, start_scn, current_scn):
+                            break
+                    if attempt < max_attempts - 1:
+                        self.logger.info(f"Force log switch and retry (attempt {attempt + 1})")
+                        self.force_log_switch()
+                        time.sleep(5)  # Increased delay for archiving to complete
+                else:
+                    self.logger.error("Failed to add valid log files after multiple attempts")
+                    return False
+
+                options = (
+                        LOGMINER_DICT_FROM_ONLINE_CATALOG |
+                        LOGMINER_COMMITTED_DATA_ONLY |
+                        LOGMINER_PRINT_PRETTY_SQL |
+                        LOGMINER_CONTINUOUS_MINE
+                )
+
+                self.logger.info(f"Starting LogMiner with SCN range: {start_scn}-{current_scn}, options: {options}")
+                cursor.callproc("DBMS_LOGMNR.START_LOGMNR", [
+                    int(start_scn),
+                    int(current_scn),  # end_scn
+                    None,  # start_time
+                    None,  # end_time
+                    None,  # dict_filename
+                    options
+                ])
+
+                self._logminer_started = True
+                self.logger.info("LogMiner session started successfully")
+                return True
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Failed to start LogMiner session: {e}", exc_info=True)
+            return False
+
+    def _log_available_logs(self):
+        """Log detailed information about available logs."""
+        if not self.conn:
+            return
+
+        try:
+            with self.conn.cursor() as cursor:
+                # Current SCN
+                cursor.execute("SELECT current_scn FROM v$database")
+                current_scn = cursor.fetchone()[0]
+                self.logger.info(f"Current database SCN: {current_scn}")
+
+                # Archived logs
+                cursor.execute("""
+                    SELECT name, first_change#, next_change#, sequence#, status
+                    FROM v$archived_log
+                    WHERE name IS NOT NULL
+                    AND status = 'A'
+                    AND deleted = 'NO'
+                    ORDER BY first_change#
+                """)
+                self.logger.info("Archived logs available:")
+                for row in cursor:
+                    self.logger.info(f"  {row[0]} (SCN: {row[1]}-{row[2]}, Seq: {row[3]}, Status: {row[4]})")
+
+                # Online logs
+                cursor.execute("""
+                    SELECT group#, sequence#, status, first_change#, next_change#
+                    FROM v$log
+                    WHERE status IN ('CURRENT','ACTIVE','UNUSED')
+                    ORDER BY group#
+                """)
+                self.logger.info("Online redo logs available:")
+                for row in cursor:
+                    self.logger.info(f"  Group {row[0]}, Seq {row[1]}, Status {row[2]}, SCN: {row[3]}-{row[4]}")
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error querying log information: {e}")
+
+    def _validate_log_files(self, start_scn: int) -> bool:
+        """Verify that logs containing the SCN are available."""
+        with self.conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) FROM v$archived_log
+                WHERE :scn BETWEEN first_change# AND next_change#
+                   OR next_change# > :scn
+            """, {'scn': start_scn})
+            count = cursor.fetchone()[0]
+            return count > 0
+
+    def _check_scn_range(self, start_scn: int) -> bool:
+        """Check if SCN is within valid range."""
+        with self.conn.cursor() as cursor:
+            cursor.execute("SELECT MIN(first_change#), MAX(next_change#) FROM v$archived_log")
+            min_scn, max_scn = cursor.fetchone()
+            return min_scn <= start_scn <= max_scn if min_scn and max_scn else False
+
+    def old_start_logminer_session(self, start_scn: Optional[int] = None):
         """Starts the LogMiner session."""
         options = (
                 cx_Oracle.STARTLOGMNR_DICT_FROM_ONLINE_CATALOG |
@@ -346,107 +558,104 @@ class OracleLogMinerConnector(SourceConnector):
             cursor.execute("SELECT CDB FROM V$DATABASE")
             return cursor.fetchone()[0] == 'YES'
 
-
-    def get_changes(self, last_position: Optional[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """Fetch structured changes from Oracle LogMiner since the last SCN."""
+    def get_changes(self, last_position: Optional[Dict[str, Any]]) -> Tuple[
+        List[Dict[str, Any]], Optional[Dict[str, Any]]]:
         if not self.conn:
             raise ConnectionError("Not connected to Oracle.")
 
-        logger.debug(f"[LogMiner] get_changes called. Last position: {last_position}")
         start_scn = last_position.get('scn', 0) if last_position else 0
-        if start_scn == 0:
-             current_pos = self.get_current_position()
-             start_scn = current_pos.get('scn', 0) if current_pos else 0
-             if start_scn == 0:
-                  logger.warning("[LogMiner] Could not determine current SCN, attempting LogMiner from SCN 0 (may be inefficient).")
-
         changes = []
-        max_scn_in_batch = start_scn # Initialize with start SCN
+        max_scn = start_scn
 
         try:
-            # Attempt to start the session (this will now handle adding logs)
-            self._start_logminer_session(start_scn)
+            self.logger.info(f"Starting LogMiner session from SCN: {start_scn}")
+            if not self._start_logminer_session(start_scn):
+                # If failed to start, try with current SCN
+                current_scn = self.get_current_position().get('scn')
+                if current_scn and current_scn != start_scn:
+                    self.logger.info(f"Retrying with current SCN: {current_scn}")
+                    if not self._start_logminer_session(current_scn):
+                        raise RuntimeError("Failed to start LogMiner session even with current SCN")
+                    start_scn = current_scn
+                else:
+                    raise RuntimeError("Failed to start LogMiner session")
 
-            # *** If session didn't start (no logs added), return no changes ***
-            if not self._logminer_started:
-                logger.info("[LogMiner] get_changes: LogMiner session not started (no relevant logs found/added). Returning no changes for this cycle.")
-                # Return empty list and the *original* position, as no progress was made
-                return [], last_position
-            # *** End Check ***
-
-            # --- If session started, proceed to query V$LOGMNR_CONTENTS ---
-            logger.info("[LogMiner] Querying V$LOGMNR_CONTENTS...")
             with self.conn.cursor() as cursor:
-                # Example Query (adjust columns based on supplemental logging)
-                #query = """
-                #    SELECT SCN, TIMESTAMP, OPERATION_CODE, OPERATION, SEG_OWNER, TABLE_NAME, ROW_ID, CSF, SQL_REDO
-                #    FROM V$LOGMNR_CONTENTS
-                #    WHERE OPERATION_CODE IN (1, 2, 3) -- INSERT, DELETE, UPDATE
-                #      -- Optional filtering (if replicating specific tables):
-                #      -- AND (SEG_OWNER = 'YOUR_SCHEMA' AND TABLE_NAME = 'YOUR_TABLE')
-                #      -- OR (SEG_OWNER = 'OTHER_SCHEMA' AND TABLE_NAME = 'OTHER_TABLE')
-                #    ORDER BY SCN
-                #"""
-                query = f"""
+                logger.info("Querying V$LOGMNR_CONTENTS...")
+                cursor.execute("""
                     SELECT OPERATION_CODE, SCN, SQL_REDO, TIMESTAMP,
                            SEG_OWNER, TABLE_NAME, ROW_ID
                     FROM V$LOGMNR_CONTENTS
                     WHERE SCN > :start_scn
-                      AND OPERATION_CODE IN (1,2,3)
+                      AND OPERATION_CODE IN (1,2,3)  -- INSERT, UPDATE, DELETE
                       AND SEG_OWNER NOT LIKE 'SYS%'
                     ORDER BY SCN
-                """
+                """, {'start_scn': start_scn})
 
-                cursor.execute(query) # No start_scn needed here, START_LOGMNR defined the range
+                logger.info(f"Found {cursor.rowcount} changes")
+                for op_code, scn, sql_redo, ts, schema, table, row_id in cursor:
+                    changes.append({
+                        'scn': scn,
+                        'timestamp': ts,
+                        'operation': {1: 'insert', 2: 'delete', 3: 'update'}.get(op_code),
+                        'schema': schema,
+                        'table': table,
+                        'sql': sql_redo
+                    })
+                    max_scn = max(max_scn, scn)
 
-                # Process rows (using simplified structure as before)
-                for row in cursor:
-                    scn, ts, op_code, op_name_raw, schema, table_name, row_id, csf, sql_redo = row
+            new_position = {'scn': max_scn} if max_scn > start_scn else last_position
+            return changes, new_position
 
-                    # Basic Operation Mapping
-                    if op_code == 1: op_name = 'insert'
-                    elif op_code == 2: op_name = 'delete'
-                    elif op_code == 3: op_name = 'update'
-                    else: op_name = op_name_raw.lower()
+        except cx_Oracle.Error as e:
+            logger.error(f"Error getting changes: {e}")
+            raise
 
-                    # *** TODO: Enhance data extraction based on actual supplemental logging ***
-                    # You MUST configure supplemental logging on source tables for PKs (and ideally changed columns)
-                    # Then, modify the query above to select those columns directly from V$LOGMNR_CONTENTS
-                    # Example (assuming PK column 'ID' and data column 'VALUE' are logged):
-                    # SELECT SCN, ..., ID, VALUE, ... FROM V$LOGMNR_CONTENTS WHERE ...
-                    # Then extract:
-                    # primary_keys = {'ID': row[index_of_id]}
-                    # after_data = {'ID': row[index_of_id], 'VALUE': row[index_of_value]}
-                    # before_data = ... (requires logging before image or parsing SQL_REDO/UNDO)
+    def validate_logminer_privileges(self) -> bool:
+        """Comprehensive privilege validation with proper error handling"""
+        checks = [
+            ("DBMS_LOGMNR package",
+             "SELECT 1 FROM all_objects WHERE owner='SYS' AND object_name='DBMS_LOGMNR'"),
 
-                    # --- Placeholder Data (REMOVE THIS IN PRODUCTION) ---
-                    primary_keys = {'placeholder_pk': f'pk_at_scn_{scn}'}
-                    before_data = {} if op_name == 'insert' else {'pk': f'pk_at_scn_{scn}'}
-                    after_data = {} if op_name == 'delete' else {'pk': f'pk_at_scn_{scn}', 'data': 'data_at_scn_{scn}'}
-                    # --- End Placeholder ---
+#            ("V$LOGMNR_CONTENTS access",
+#             "SELECT 1 FROM v$logmnr_contents WHERE ROWNUM=1"),
 
-                    change_event = {
-                        'source': 'oracle_logminer', 'position': {'scn': scn}, 'timestamp': ts,
-                        'operation': op_name, 'schema': schema, 'table': table_name,
-                        'primary_keys': primary_keys, 'before_data': before_data, 'after_data': after_data,
-                        '_metadata': { 'row_id': row_id, 'csf': csf, 'raw_sql': sql_redo }
-                    }
-                    changes.append(change_event)
+            ("ARCHIVED_LOG access",
+             "SELECT 1 FROM v$archived_log WHERE ROWNUM=1"),
 
-                    if scn > max_scn_in_batch: max_scn_in_batch = scn
+            ("LOGMINING privilege",
+             "SELECT 1 FROM session_privs WHERE privilege='LOGMINING'")
+        ]
 
-                logger.info(f"[LogMiner] Fetched {len(changes)} change events from V$LOGMNR_CONTENTS.")
+        try:
+            with self.conn.cursor() as cursor:
+                # Ensure CDB$ROOT context
+                try:
+                    logger.info(f"Switching DB Container to CDB$ROOT .....")
+                    cursor.execute("ALTER SESSION SET CONTAINER = CDB$ROOT")
+                except cx_Oracle.DatabaseError as e:
+                    logger.error(f"Container switch failed: {e}")
+                    return False
+
+                logger.info(f"Looping on privilege requirement list .....")
+                for check_name, test_query in checks:
+                    try:
+                        logger.info(f"checking privilege {check_name} .....")
+                        cursor.execute(test_query)
+                        if not cursor.fetchone():
+                            logger.error(f"Validation failed: {check_name}")
+                            return False
+                        logger.info(f"privilege {check_name} check Ok")
+                    except cx_Oracle.DatabaseError as e:
+                        logger.error(f"Privilege check failed for {check_name}: {e}")
+                        return False
+
+            return True
 
         except Exception as e:
-            logger.error(f"[LogMiner] Error during get_changes (querying V$LOGMNR_CONTENTS or processing): {e}", exc_info=True)
-            # Ensure LogMiner session is stopped if an error occurs during processing
-            self._end_logminer_session()
-            raise # Re-raise the exception to fail the task
+            logger.error(f"Unexpected error during privilege validation: {e}")
+            return False
 
-        # Determine the new position
-        new_position = {'scn': max_scn_in_batch} if max_scn_in_batch > start_scn else last_position
-        logger.debug(f"[LogMiner] get_changes finished. Returning {len(changes)} changes. New position: {new_position}")
-        return changes, new_position
 
     def _end_logminer_session(self):
         """Stops the current LogMiner session."""
@@ -532,6 +741,103 @@ class OracleLogMinerConnector(SourceConnector):
             return {}
 
     def get_table_schema(self, schema_name: str, table_name: str) -> Dict[str, Any]:
+        if not self.conn:
+            raise ConnectionError("Not connected to Oracle.")
+
+        table_def = {
+            'schema': schema_name,
+            'table': table_name,
+            'columns': [],
+            'primary_key': []
+        }
+
+        try:
+            with self.conn.cursor() as cursor:
+                # Try with original case first
+                logger.info(
+                    f"get_table_schema : calling _get_table_columns schema_name : {schema_name}, table_name : {table_name}")
+                columns = self._get_table_columns(cursor, schema_name, table_name)
+                logger.info(
+                    f"get_table_schema : _get_table_columns columns : {columns}")
+
+                # If no columns found, try uppercase
+                if not columns:
+                    columns = self._get_table_columns(cursor, schema_name.upper(), table_name.upper())
+
+                    if not columns:
+                       raise ValueError(f"Table {schema_name}.{table_name} not found or no columns accessible.")
+
+                table_def['columns'] = columns
+                table_def['primary_key'] = self._get_primary_key_columns(cursor, schema_name, table_name)
+
+            return table_def
+        except cx_Oracle.Error as e:
+            logger.error(f"Error fetching table schema for {schema_name}.{table_name}: {e}")  # Fixed logging here
+            raise ValueError(f"Error fetching table schema for {schema_name}.{table_name}: {e}")
+
+    def _get_table_columns(self, cursor, schema_name: str, table_name: str) -> List[Dict[str, Any]]:
+        """Helper method to get columns with specific case handling"""
+        query = """
+            SELECT column_name, data_type, data_length, data_precision, data_scale, nullable
+            FROM all_tab_columns
+            WHERE owner = :owner AND table_name = :tbl
+            ORDER BY column_id
+        """
+        logger.info(f"_get_table_columns query : for {query}")
+        logger.info(f"_get_table_columns: query for {schema_name}.{table_name}")
+        try:
+            # Convert to uppercase to match Oracle's default case-insensitive behavior
+            cursor.execute(query, {'owner': schema_name.upper(), 'tbl': table_name.upper()})
+#            cursor.execute(query)
+#            cols = [row for row in cursor]
+#            logger.info(f"_get_table_columns: cols :  {cols}")
+            return [{
+                'name': col[0],
+                'type': col[1],
+                'length': col[2],
+                'precision': col[3],
+                'scale': col[4],
+                'nullable': col[5] == 'Y'
+            } for col in cursor]
+        except cx_Oracle.Error as e:
+            logger.error(f"Error fetching columns: {e}")
+            return []
+
+    def _get_primary_key_columns(self, cursor, schema_name: str, table_name: str) -> List[str]:
+        """Helper method to get PK columns with case handling"""
+        query = """
+            SELECT cols.column_name
+            FROM all_constraints cons
+            JOIN all_cons_columns cols ON cons.constraint_name = cols.constraint_name
+            WHERE cons.constraint_type = 'P'
+            AND cons.owner = :owner
+            AND cons.table_name = :tbl
+            ORDER BY cols.position
+        """
+#        query = """
+#            SELECT cols.column_name FROM all_constraints cons
+#            JOIN all_cons_columns cols ON cons.constraint_name = cols.constraint_name
+#            WHERE  cons.owner = 'AEF' AND cons.constraint_type = 'P' AND cons.table_name = 'AEF_TEST'
+#            ORDER BY cols.position
+#        """
+
+        # Try original case first
+        logger.info(f"_get_primary_key_columns Query Statement:  {query} for {schema_name}.{table_name} ")
+        cursor.execute(query, {'owner': schema_name.upper(), 'tbl': table_name.upper()})
+#        cursor.execute(query)
+        logger.info(f"_get_primary_key_columns after execute Query Statement")
+        pks = [row[0] for row in cursor]
+        logger.info(f"_get_primary_key_columns:  {pks}")
+
+        # If no PKs found, try uppercase
+        if not pks:
+            cursor.execute(query, {'schema': schema_name.upper(), 'table': table_name.upper()})
+            pks = [row[0] for row in cursor]
+            logger.info(f"_get_primary_key_columns second attempt:  {pks}")
+
+        return pks
+
+    def oldget_table_schema(self, schema_name: str, table_name: str) -> Dict[str, Any]:
         """Retrieve column definitions and primary key for an Oracle table."""
         if not self.conn:
             raise ConnectionError("Not connected to Oracle.")
@@ -642,6 +948,92 @@ class OracleLogMinerConnector(SourceConnector):
         except cx_Oracle.Error as e:
             print(f"Error during initial load for {schema_name}.{table_name}: {e}") # Replace with logging
             raise # Re-raise the exception
+
+    def _validate_scn_range(self, start_scn: int) -> bool:
+        """Validate that the SCN is within available log range"""
+        if not self.conn:
+            return False
+
+        try:
+            with self.conn.cursor() as cursor:
+                # Get current SCN
+                cursor.execute("SELECT current_scn FROM v$database")
+                current_scn = cursor.fetchone()[0]
+
+                # Get oldest SCN in archive logs
+                cursor.execute("""
+                    SELECT MIN(first_change#), MAX(next_change#)
+                    FROM v$archived_log 
+                    WHERE name IS NOT NULL
+                    AND first_change# > 0
+                    AND status = 'A'
+                    AND deleted = 'NO'
+                """)
+                min_scn, max_scn = cursor.fetchone()
+
+                # Get online log range
+                cursor.execute("""
+                    SELECT MIN(first_change#), MAX(next_change#)
+                    FROM v$log
+                    WHERE status IN ('CURRENT','ACTIVE')
+                    AND first_change# < next_change#
+                    AND next_change# < POWER(2, 48)  -- Filter out invalid SCNs
+                """)
+                online_min, online_max = cursor.fetchone()
+
+                # Determine overall min/max SCN
+                min_scn = min(s for s in [min_scn, online_min] if s is not None)
+                max_scn = max(s for s in [max_scn, online_max, current_scn] if s is not None)
+
+                if start_scn < min_scn:
+                    self.logger.warning(
+                        f"Start SCN {start_scn} is older than oldest available SCN {min_scn}. "
+                        f"Using current SCN {current_scn} instead."
+                    )
+                    return False
+
+                if start_scn > max_scn:
+                    self.logger.warning(
+                        f"Start SCN {start_scn} is newer than newest available SCN {max_scn}. "
+                        f"Using current SCN {current_scn} instead."
+                    )
+                    return False
+
+                return True
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error validating SCN range: {e}")
+            return False
+
+    def _verify_log_files(self, cursor, start_scn: int, end_scn: int) -> bool:
+        """Verify that the log files we added actually cover our SCN range."""
+        try:
+            # Check what logs are registered with LogMiner
+            cursor.execute("""
+                SELECT MIN(first_change#), MAX(next_change#)
+                FROM v$logmnr_logs
+                WHERE name IS NOT NULL
+            """)
+            result = cursor.fetchone()
+
+            if not result or result[0] is None:
+                self.logger.error("No log files registered with LogMiner")
+                return False
+
+            min_scn, max_scn = result
+
+            if start_scn < min_scn or end_scn > max_scn:
+                self.logger.error(
+                    f"Log files don't cover required SCN range. "
+                    f"Available: {min_scn}-{max_scn}, Needed: {start_scn}-{end_scn}"
+                )
+                return False
+
+            return True
+
+        except cx_Oracle.Error as e:
+            self.logger.error(f"Error verifying log files: {e}")
+            return False
 
 # --- Remove the old PostgresCDCHandler unless you plan to refactor it immediately ---
 # class PostgresCDCHandler:

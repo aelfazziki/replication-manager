@@ -1,14 +1,10 @@
 # app/tasks.py (Enhanced with Explicit App Creation)
-
 import time
 from datetime import datetime, timezone
 import logging
 from typing import Dict, Any, Optional
 
 from celery import Celery
-# Remove direct import of current_app if no longer needed at module level
-# from flask import Flask, current_app
-from sqlalchemy.exc import SQLAlchemyError
 from redis import Redis
 
 # Assuming interfaces.py is in app/
@@ -130,9 +126,17 @@ def run_replication(self, task_id: int):
                      for table_ref in selected_tables:
                          schema_name, table_name = table_ref['schema'], table_ref['table']
                          logger.info(f"[Task {task_id}] Getting schema for source table {schema_name}.{table_name}")
-                         source_schema_def = source_connector.get_table_schema(schema_name, table_name)
-                         logger.info(f"[Task {task_id}] Creating target table {target_schema_name}.{table_name} if not exists...")
-                         target_connector.create_table_if_not_exists(source_schema_def, target_schema_name)
+                         # In your task.py file where you call get_table_schema
+                         try:
+                             source_schema_def = source_connector.get_table_schema(schema_name, table_name)
+                             logger.info(
+                                 f"[Task {task_id}] Creating target table {target_schema_name}.{table_name} if not exists...")
+                             target_connector.create_table_if_not_exists(source_schema_def, target_schema_name)
+                         except Exception as e:
+                             logger.error(
+                                 f"Failed to get schema for {schema_name}.{table_name}. Details: {str(e)}")
+                             raise
+#                         source_schema_def = source_connector.get_table_schema(schema_name, table_name)
 
             # --- Initial Load ---
             if task.initial_load:

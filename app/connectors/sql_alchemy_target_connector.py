@@ -1,6 +1,8 @@
 # sql_alchemy_target_connector.py (or add to interfaces.py)
 
 from sqlalchemy import create_engine, text, inspect, MetaData, Table, Column # Added Column
+#from sqlalchemy.dialects.oracle import oracledb
+import oracledb
 from sqlalchemy.engine import Engine, Connection
 from sqlalchemy.exc import SQLAlchemyError, NoSuchTableError
 # --- Add imports for expression language ---
@@ -41,7 +43,8 @@ class SqlAlchemyTargetConnector(TargetConnector):
             if not service_name:
                 raise ValueError("Oracle target requires 'service_name' in config.")
             # Ensure cx_Oracle is installed: pip install sqlalchemy cx_Oracle
-            return f"oracle+cx_oracle://{user}:{password}@{host}:{port}/?service_name={service_name}"
+#            return f"oracle+cx_oracle://{user}:{password}@{host}:{port}/?service_name={service_name}"
+            return f"oracle+oracledb://{user}:{password}@{host}:{port}/?service_name={service_name}"
         elif db_type == 'mysql':
             # Expects 'database' in config
             database = self.config.get('database')
@@ -68,6 +71,9 @@ class SqlAlchemyTargetConnector(TargetConnector):
         self.config = config
         conn_str = self._get_connection_string()
         try:
+            # Add this line before creating engines (only needed if using thick mode)
+            #oracledb.init_oracle_client()
+
             # Consider engine options like pool_size, max_overflow, etc. for production
             self.engine = create_engine(conn_str)
             # Establish a connection to test validity

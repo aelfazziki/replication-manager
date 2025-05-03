@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-import cx_Oracle
+import oracledb as cx_Oracle
 from sqlalchemy import create_engine, inspect, text
 #from sqlalchemy.dialects.postgresql import psycopg2
 import psycopg2  # Add this import at the top of the file
